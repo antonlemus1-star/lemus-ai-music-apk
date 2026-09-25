@@ -12,7 +12,7 @@ def _log(msg):
     except Exception:
         pass
 
-_log("=== STARTUP v5.0.0 ===")
+_log("=== STARTUP v5.0.1 ===")
 
 # ===== ИМПОРТЫ =====
 try:
@@ -84,7 +84,7 @@ except Exception as e:
     raise
 
 # ===== КОНСТАНТЫ =====
-CURRENT_VERSION = "5.0.0"
+CURRENT_VERSION = "5.0.1"
 CONFIG_FILE = "lemus_studio_config.json"
 PROJECTS_FILE = "lemus_projects_db.json"
 HISTORY_FILE = "lemus_prompts_history.json"
@@ -140,7 +140,7 @@ def get_storage_root():
     _STORAGE_ROOT = "."
     return _STORAGE_ROOT
 
-# ===== KV ДИЗАЙН =====
+# ===== KV ДИЗАЙН (ИСПРАВЛЕНЫ СКОБКИ В md_bg_color) =====
 KV = '''
 #:import dp kivy.metrics.dp
 
@@ -177,7 +177,7 @@ MDBoxLayout:
         left_action_items: [["menu", lambda x: None]]
         right_action_items: [["shield-key-outline", lambda x: app.show_vault_status()], ["information-outline", lambda x: app.show_onboarding()]]
 
-    # ВЕРТИКАЛЬНОЕ МЕНЮ (всегда видно, не зависит от ширины экрана)
+    # ВЕРТИКАЛЬНОЕ МЕНЮ (ИСПРАВЛЕНО: скобки вокруг кортежей цветов)
     MDBoxLayout:
         orientation: "horizontal"
         size_hint_y: None
@@ -196,49 +196,49 @@ MDBoxLayout:
                 
                 MDRaisedButton:
                     text: "Сингл"
-                    md_bg_color: 0.4, 0.3, 0.7, 1 if app.current_tab == "single" else 0.2, 0.18, 0.3, 1
+                    md_bg_color: (0.4, 0.3, 0.7, 1) if app.current_tab == "single" else (0.2, 0.18, 0.3, 1)
                     on_release: app.switch_tab("single")
                     size_hint_x: None
                     width: dp(100)
                 
                 MDRaisedButton:
                     text: "Хит"
-                    md_bg_color: 0.7, 0.3, 0.2, 1 if app.current_tab == "viral" else 0.35, 0.18, 0.12, 1
+                    md_bg_color: (0.7, 0.3, 0.2, 1) if app.current_tab == "viral" else (0.35, 0.18, 0.12, 1)
                     on_release: app.switch_tab("viral")
                     size_hint_x: None
                     width: dp(100)
                 
                 MDRaisedButton:
                     text: "Альбом"
-                    md_bg_color: 0.4, 0.25, 0.6, 1 if app.current_tab == "album" else 0.22, 0.15, 0.32, 1
+                    md_bg_color: (0.4, 0.25, 0.6, 1) if app.current_tab == "album" else (0.22, 0.15, 0.32, 1)
                     on_release: app.switch_tab("album")
                     size_hint_x: None
                     width: dp(100)
                 
                 MDRaisedButton:
                     text: "Промпт"
-                    md_bg_color: 0.2, 0.5, 0.4, 1 if app.current_tab == "prompt" else 0.12, 0.28, 0.22, 1
+                    md_bg_color: (0.2, 0.5, 0.4, 1) if app.current_tab == "prompt" else (0.12, 0.28, 0.22, 1)
                     on_release: app.switch_tab("prompt")
                     size_hint_x: None
                     width: dp(100)
                 
                 MDRaisedButton:
                     text: "Доход"
-                    md_bg_color: 0.25, 0.45, 0.4, 1 if app.current_tab == "money" else 0.15, 0.25, 0.22, 1
+                    md_bg_color: (0.25, 0.45, 0.4, 1) if app.current_tab == "money" else (0.15, 0.25, 0.22, 1)
                     on_release: app.switch_tab("money")
                     size_hint_x: None
                     width: dp(100)
                 
                 MDRaisedButton:
                     text: "Медиатека"
-                    md_bg_color: 0.3, 0.4, 0.6, 1 if app.current_tab == "projects" else 0.18, 0.22, 0.32, 1
+                    md_bg_color: (0.3, 0.4, 0.6, 1) if app.current_tab == "projects" else (0.18, 0.22, 0.32, 1)
                     on_release: app.switch_tab("projects")
                     size_hint_x: None
                     width: dp(120)
                 
                 MDRaisedButton:
                     text: "Настройки"
-                    md_bg_color: 0.5, 0.3, 0.55, 1 if app.current_tab == "settings" else 0.28, 0.18, 0.3, 1
+                    md_bg_color: (0.5, 0.3, 0.55, 1) if app.current_tab == "settings" else (0.28, 0.18, 0.3, 1)
                     on_release: app.switch_tab("settings")
                     size_hint_x: None
                     width: dp(120)
@@ -295,7 +295,7 @@ MDBoxLayout:
             text_color: 0.7, 0.65, 0.9, 1
 '''
 
-# ===== ВКЛАДКА: СИНГЛ =====
+# ===== ВКЛАДКИ (без изменений) =====
 TAB_SINGLE = '''
 MDScrollView:
     MDBoxLayout:
@@ -399,7 +399,6 @@ MDScrollView:
                     color: 0.6, 0.4, 1, 1
 '''
 
-# ===== ВКЛАДКА: ХИТ =====
 TAB_VIRAL = '''
 MDScrollView:
     MDBoxLayout:
@@ -475,7 +474,6 @@ MDScrollView:
                     color: 0.7, 0.3, 0.2, 1
 '''
 
-# ===== ВКЛАДКА: АЛЬБОМ =====
 TAB_ALBUM = '''
 MDScrollView:
     MDBoxLayout:
@@ -568,7 +566,6 @@ MDScrollView:
                 theme_text_color: "Secondary"
 '''
 
-# ===== ВКЛАДКА: ПРОМПТ (НОВАЯ!) =====
 TAB_PROMPT = '''
 MDScrollView:
     MDBoxLayout:
@@ -643,7 +640,6 @@ MDScrollView:
                     color: 0.2, 0.5, 0.4, 1
 '''
 
-# ===== ВКЛАДКА: ДОХОД =====
 TAB_MONEY = '''
 MDScrollView:
     MDBoxLayout:
@@ -701,7 +697,6 @@ MDScrollView:
                 theme_text_color: "Secondary"
 '''
 
-# ===== ВКЛАДКА: МЕДИАТЕКА =====
 TAB_PROJECTS = '''
 MDBoxLayout:
     orientation: "vertical"
@@ -807,7 +802,6 @@ MDBoxLayout:
             id: projects_list_container
 '''
 
-# ===== ВКЛАДКА: НАСТРОЙКИ =====
 TAB_SETTINGS = '''
 MDScrollView:
     MDBoxLayout:
@@ -1038,7 +1032,6 @@ class LemusStudioApp(MDApp):
     def on_start(self):
         _log("on_start()")
         
-        # Загружаем все вкладки
         self.tab_widgets["single"] = Builder.load_string(TAB_SINGLE)
         self.tab_widgets["viral"] = Builder.load_string(TAB_VIRAL)
         self.tab_widgets["album"] = Builder.load_string(TAB_ALBUM)
@@ -1047,7 +1040,6 @@ class LemusStudioApp(MDApp):
         self.tab_widgets["projects"] = Builder.load_string(TAB_PROJECTS)
         self.tab_widgets["settings"] = Builder.load_string(TAB_SETTINGS)
         
-        # Показываем первую вкладку
         self.switch_tab("single")
         
         def safe(fn, name):
@@ -1061,9 +1053,9 @@ class LemusStudioApp(MDApp):
         safe(self._request_all_files_access, "files")
         safe(self.populate_settings_fields, "settings")
         safe(self.refresh_projects_ui, "projects")
-        safe(lambda: setattr(self.root.ids.version_label, "text",
+        safe(lambda: setattr(self.tab_widgets["settings"].ids.version_label, "text",
              f"v{CURRENT_VERSION}"), "version")
-        safe(lambda: setattr(self.root.ids.ai_disclose_switch, "active",
+        safe(lambda: setattr(self.tab_widgets["settings"].ids.ai_disclose_switch, "active",
              bool(self.config.get("disclose_ai", True))), "switch")
         safe(self.update_activation_status, "status")
         safe(lambda: self.check_for_updates(silent=True), "updates")
@@ -1197,7 +1189,6 @@ class LemusStudioApp(MDApp):
                     except Exception:
                         pass
 
-    # ===== ПЛЕЕР =====
     def play_item(self, item):
         if item in self.last_rendered_items:
             idx = self.last_rendered_items.index(item)
@@ -1276,7 +1267,6 @@ class LemusStudioApp(MDApp):
         self.root.ids.player_title.text = ""
         self.root.ids.player_pos.text = "0:00"
 
-    # ===== ГЕНЕРАЦИЯ =====
     def start_single_generation(self):
         w = self.tab_widgets["single"]
         t = w.ids.s_title_input.text.strip()
@@ -1681,7 +1671,6 @@ class LemusStudioApp(MDApp):
             print(f"Fish: {e}")
             return None
 
-    # ===== АЛЬБОМЫ =====
     def get_albums(self):
         albums = {}
         for p in self.projects:
@@ -1754,7 +1743,6 @@ class LemusStudioApp(MDApp):
             w = self.tab_widgets["album"]
             Clock.schedule_once(lambda dt: setattr(w.ids.alb_status_label, "text", f"Ошибка: {str(e)[:80]}"), 0)
 
-    # ===== МЕДИАТЕКА =====
     def load_projects(self):
         p = os.path.join(self.get_data_path(), PROJECTS_FILE)
         if os.path.exists(p):
@@ -1978,7 +1966,6 @@ class LemusStudioApp(MDApp):
         except Exception as e:
             toast(f"ZIP: {str(e)[:50]}")
 
-    # ===== АКТИВАЦИЯ =====
     def _import_keys_from_json(self, path):
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -2129,7 +2116,6 @@ class LemusStudioApp(MDApp):
             buttons=[MDRaisedButton(text="OK", on_release=lambda i: self.diag_dialog.dismiss())])
         self.diag_dialog.open()
 
-    # ===== ОНБОРДИНГ / ГАЙД / КАЛЬКУЛЯТОР =====
     def show_onboarding(self):
         self.onboard_idx = 0
         self._render_onboard_card()
@@ -2258,7 +2244,6 @@ class LemusStudioApp(MDApp):
             buttons=[MDRaisedButton(text="OK", on_release=lambda i: d.dismiss())])
         d.open()
 
-    # ===== ИСТОРИЯ =====
     def load_history(self):
         p = os.path.join(self.get_data_path(), HISTORY_FILE)
         if os.path.exists(p):
@@ -2304,7 +2289,6 @@ class LemusStudioApp(MDApp):
                      MDRaisedButton(text="Повторить последний", on_release=use_last)])
         dlg.open()
 
-    # ===== КОНФИГ =====
     def load_config(self):
         self._migrate_old_data()
         p = os.path.join(self.get_data_path(), CONFIG_FILE)
@@ -2383,7 +2367,6 @@ class LemusStudioApp(MDApp):
     def exit_file_manager(self, *args):
         self.file_manager.close()
 
-    # ===== YANDEX / УВЕДОМЛЕНИЯ / OTA =====
     def backup_to_yandex(self):
         token = self.config.get("yandex_token", "")
         if not token:
