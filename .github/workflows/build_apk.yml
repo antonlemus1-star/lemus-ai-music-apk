@@ -49,17 +49,18 @@ jobs:
           rm -rf ~/.cache/pip || true
           rm -rf ~/.buildozer || true
           rm -rf .buildozer || true
-          rm -rf /home/runner/.local/lib/python*/site-packages || true
           find /home/runner -name "*.whl" -delete 2>/dev/null || true
-          find /home/runner -path "*arm64*" -prune -o -name "*.so" -print | grep -i 'x86\|amd64' | head -50 || true
+          rm -rf /tmp/pip-* || true
+          echo "✅ All pip/buildozer caches purged"
 
       - name: Syntax Check
         run: python -m py_compile main.py
 
-      - name: Build APK (auto-accept licenses, offline mode forced)
+      - name: Build APK (offline mode forced, auto-accept licenses)
         env:
           PIP_NO_INDEX: "1"
-          BUILDOZER_DEBUG: "1"
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
+          PYTHONNOUSERSITE: "1"
         run: yes | buildozer android debug
 
       - name: VERIFY APK architecture integrity
@@ -98,7 +99,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LemusStudio-v2.6.7-ARM64-CLEAN
+          name: LemusStudio-v2.6.8-ARM64-CLEAN
           path: bin/*.apk
 
       - name: Create Release
