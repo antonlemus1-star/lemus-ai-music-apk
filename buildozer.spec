@@ -6,7 +6,7 @@ source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json
 version = 2.6.7
 
-# КЛЮЧЕВОЕ: python3 и hostpython3 ОДНОЙ версии — иначе p4a падает
+# КРИТИЧНО: python3 и hostpython3 одной версии, pyjnius явно
 requirements = python3==3.11.9,hostpython3==3.11.9,kivy==2.3.0,kivymd==1.2.0,pillow,mutagen,pyjnius
 
 orientation = portrait
@@ -18,6 +18,9 @@ android.minapi = 21
 android.ndk = 25b
 android.archs = arm64-v8a
 android.allow_backup = True
+
+# Принудительно чистим старые артефакты перед сборкой
+android.clean_assets = True
 
 [buildozer]
 log_level = 2
