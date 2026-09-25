@@ -44,6 +44,7 @@ jobs:
           echo "cython==3.0.11" > /tmp/p4a-constraints.txt
           echo "PIP_CONSTRAINT=/tmp/p4a-constraints.txt" >> $GITHUB_ENV
 
+      # ЯДЕРНАЯ ОЧИСТКА КЭША (убиваем старые x86_64 .so/.whl)
       - name: Nuclear cleanup of ALL caches (fix x86_64 leak)
         run: |
           rm -rf ~/.cache/pip || true
@@ -56,13 +57,14 @@ jobs:
       - name: Syntax Check
         run: python -m py_compile main.py
 
-      - name: Build APK (offline mode forced, auto-accept licenses)
+      # СБОРКА БЕЗ PIP_NO_INDEX (pip может качать KivyMD и другие online-зависимости)
+      - name: Build APK (online deps allowed, auto-accept licenses)
         env:
-          PIP_NO_INDEX: "1"
           PIP_DISABLE_PIP_VERSION_CHECK: "1"
           PYTHONNOUSERSITE: "1"
         run: yes | buildozer android debug
 
+      # ПРОВЕРКА АРХИТЕКТУРЫ ВНУТРИ APK (гарантия отсутствия x86_64 мусора)
       - name: VERIFY APK architecture integrity
         run: |
           cd bin
@@ -99,7 +101,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LemusStudio-v2.6.8-ARM64-CLEAN
+          name: LemusStudio-v2.6.9-ARM64-CLEAN
           path: bin/*.apk
 
       - name: Create Release
