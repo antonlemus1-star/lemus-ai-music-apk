@@ -4,13 +4,9 @@ package.name = lemusaimusicstudio
 package.domain = org.lemus.music
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json
-version = 2.9.0
+version = 3.0.0
 
-# Python 3.11.9 + hostpython3 3.11.9 (обязательно вместе)
-# Kivy 2.3.0 + KivyMD 1.2.0 (проверенная связка)
-# pyjnius для Android-интеграции
-# mutagen для ID3 тегов
-# БЕЗ pillow (не используется)
+# Явные версии: python3 и hostpython3 ОБЯЗАТЕЛЬНО совпадают
 requirements = python3==3.11.9,hostpython3==3.11.9,kivy==2.3.0,kivymd==1.2.0,mutagen,pyjnius
 
 orientation = portrait
@@ -24,8 +20,7 @@ android.archs = arm64-v8a
 android.allow_backup = True
 android.accept_sdk_license = True
 
-# Проверенная ветка p4a (не master!)
-p4a.branch = release-2024.01.21
+# НЕ указываем p4a.branch — используем master (поддерживает 3.11.9)
 
 [buildozer]
 log_level = 2
