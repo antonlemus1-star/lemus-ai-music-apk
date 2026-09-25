@@ -54,9 +54,15 @@ jobs:
       - name: VERIFY whole APK for host-tagged binaries
         run: |
           cd bin
-          ls *.apk || { echo "❌ No APK"; exit 1; }
+          APK_FILE=$(ls *.apk 2>/dev/null | head -n1)
+          if [ -z "$APK_FILE" ]; then
+            echo "❌ No APK found in bin/"
+            ls -la
+            exit 1
+          fi
+          echo "Found APK: $APK_FILE"
           mkdir -p _v && cd _v
-          unzip -q ../$(ls ../*.apk | head -n1)
+          unzip -q "../$APK_FILE"
           BAD=$(find . -type f \( -name '*x86_64*' -o -name '*linux-gnu*' -o -name '*amd64*' \) | wc -l)
           echo "Host-tagged files inside APK: $BAD"
           if [ "$BAD" != "0" ]; then
