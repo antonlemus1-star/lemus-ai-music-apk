@@ -12,6 +12,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-22.04
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -38,7 +39,7 @@ jobs:
           pip install --upgrade pip
           pip install buildozer cython==0.29.36
 
-      - name: Pin Cython 3.0.11 for build isolation (FIX kivy missing .c)
+      - name: Pin Cython 3.0.11 for build isolation
         run: |
           echo "cython==3.0.11" > /tmp/p4a-constraints.txt
           echo "PIP_CONSTRAINT=/tmp/p4a-constraints.txt" >> $GITHUB_ENV
@@ -57,7 +58,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LemusStudio-v2.6-APK
+          name: LemusStudio-v2.6.6-APK
           path: bin/*.apk
 
       - name: Create Release
