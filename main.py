@@ -12,7 +12,7 @@ def _log(msg):
     except Exception:
         pass
 
-_log("=== STARTUP BEGIN v4.0.0 ===")
+_log("=== STARTUP BEGIN v4.1.0 ===")
 _log(f"Python {sys.version}")
 
 # ===== ИМПОРТЫ С FALLBACK =====
@@ -23,7 +23,6 @@ try:
     from kivy.core.audio import SoundLoader
     from kivy.clock import Clock
     from kivy.metrics import dp
-    from kivy.animation import Animation
     from kivy.uix.boxlayout import BoxLayout
     _log("OK kivy")
 except Exception as e:
@@ -98,7 +97,7 @@ except Exception as e:
 _log("All imports OK")
 
 # ===== КОНСТАНТЫ =====
-CURRENT_VERSION = "4.0.0"
+CURRENT_VERSION = "4.1.0"
 CONFIG_FILE = "lemus_studio_config.json"
 PROJECTS_FILE = "lemus_projects_db.json"
 HISTORY_FILE = "lemus_prompts_history.json"
@@ -191,64 +190,7 @@ MONETIZE_CARDS = [
 ]
 
 
-# ===== SPLASH SCREEN KV =====
-SPLASH_KV = '''
-<SplashScreen>:
-    BoxLayout:
-        orientation: 'vertical'
-        canvas.before:
-            Color:
-                rgba: 0.08, 0.08, 0.12, 1
-            Rectangle:
-                pos: self.pos
-                size: self.size
-        
-        Widget:
-            size_hint_y: 0.3
-        
-        BoxLayout:
-            size_hint_y: None
-            height: '200dp'
-            orientation: 'vertical'
-            
-            Label:
-                text: 'LEMUS'
-                font_size: '48sp'
-                bold: True
-                color: 0.6, 0.4, 1, 1
-                size_hint_y: None
-                height: '60dp'
-            
-            Label:
-                text: 'AI MUSIC STUDIO'
-                font_size: '18sp'
-                color: 0.7, 0.7, 0.8, 1
-                size_hint_y: None
-                height: '30dp'
-        
-        Widget:
-            size_hint_y: 0.2
-        
-        ProgressBar:
-            id: splash_progress
-            value: 0
-            max: 100
-            size_hint_y: None
-            height: '4dp'
-            background_color: 0.2, 0.2, 0.25, 1
-            color: 0.6, 0.4, 1, 1
-        
-        Label:
-            id: splash_status
-            text: 'Инициализация...'
-            font_size: '12sp'
-            color: 0.5, 0.5, 0.6, 1
-            size_hint_y: None
-            height: '30dp'
-            padding: '10dp'
-'''
-
-# ===== ОСНОВНОЙ KV (современный дизайн) =====
+# ===== ОСНОВНОЙ KV (современный дизайн, БЕЗ splash screen) =====
 KV = '''
 MDBoxLayout:
     orientation: "vertical"
@@ -942,11 +884,6 @@ MDBoxLayout:
 '''
 
 
-# ===== SPLASH SCREEN CLASS =====
-class SplashScreen(BoxLayout):
-    pass
-
-
 class LemusStudioApp(MDApp):
     def build(self):
         _log("build() called")
@@ -972,7 +909,6 @@ class LemusStudioApp(MDApp):
         self.play_queue_list = []
         self.play_idx = 0
         self._pos_event = None
-        self.splash = None
 
         self.file_manager = MDFileManager(
             exit_manager=self.exit_file_manager,
@@ -985,41 +921,11 @@ class LemusStudioApp(MDApp):
         self.load_history()
         _log("build: data loaded")
         
-        # Показываем splash screen
-        self.splash = SplashScreen()
-        Builder.load_string(SPLASH_KV)
-        return self.splash
+        # Загружаем основной интерфейс сразу (без splash screen)
+        return Builder.load_string(KV)
 
     def on_start(self):
         _log("on_start() called")
-        
-        # Анимация splash screen
-        def animate_splash(dt):
-            if self.splash:
-                progress = self.splash.ids.splash_progress
-                status = self.splash.ids.splash_status
-                
-                if progress.value < 30:
-                    progress.value += 2
-                    status.text = "Загрузка модулей..."
-                elif progress.value < 60:
-                    progress.value += 2
-                    status.text = "Инициализация интерфейса..."
-                elif progress.value < 90:
-                    progress.value += 2
-                    status.text = "Подготовка студии..."
-                else:
-                    progress.value = 100
-                    status.text = "Готово!"
-                    Clock.schedule_once(self._finish_splash, 0.3)
-                    return False
-            return True
-        
-        Clock.schedule_interval(animate_splash, 0.05)
-
-    def _finish_splash(self, dt):
-        _log("Splash finished, loading main UI")
-        self.root = Builder.load_string(KV)
         
         def safe(fn, name):
             try:
@@ -1293,7 +1199,7 @@ class LemusStudioApp(MDApp):
     def _fetch_remote_keys_thread(self):
         try:
             req = urllib.request.Request(REMOTE_KEYS_URL,
-                headers={"User-Agent": "LemusStudio/4.0", "Accept": "application/json"})
+                headers={"User-Agent": "LemusStudio/4.1", "Accept": "application/json"})
             with urllib.request.urlopen(req, timeout=15) as r:
                 remote = json.loads(r.read().decode("utf-8"))
             for k, v in remote.items():
@@ -2010,7 +1916,7 @@ class LemusStudioApp(MDApp):
         try:
             enc = urllib.parse.quote(prompt[:180])
             url = f"https://image.pollinations.ai/prompt/{enc}?width=3000&height=3000&nologo=true"
-            req = urllib.request.Request(url, headers={"User-Agent": "LemusStudio/4.0"})
+            req = urllib.request.Request(url, headers={"User-Agent": "LemusStudio/4.1"})
             with urllib.request.urlopen(req, timeout=60) as r:
                 return r.read()
         except Exception:
@@ -2033,7 +1939,7 @@ class LemusStudioApp(MDApp):
         try:
             enc = urllib.parse.quote(prompt[:160])
             req = urllib.request.Request(f"https://audio.pollinations.ai/prompt/{enc}",
-                                          headers={"User-Agent": "LemusStudio/4.0"})
+                                          headers={"User-Agent": "LemusStudio/4.1"})
             with urllib.request.urlopen(req, timeout=60) as r:
                 d = r.read()
                 if len(d) > 5000:
@@ -2385,7 +2291,7 @@ class LemusStudioApp(MDApp):
     def _check_update_thread(self, silent):
         try:
             req = urllib.request.Request(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
-                headers={"User-Agent": "LemusStudio/4.0", "Accept": "application/vnd.github.v3+json"})
+                headers={"User-Agent": "LemusStudio/4.1", "Accept": "application/vnd.github.v3+json"})
             with urllib.request.urlopen(req, timeout=10) as r:
                 data = json.loads(r.read().decode())
                 remote = data.get("tag_name", "").lstrip("v")
