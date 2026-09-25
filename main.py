@@ -2,118 +2,83 @@ import os, sys, io, json, threading, hashlib, base64, math, time, struct, wave, 
 import traceback
 import urllib.request, urllib.parse, urllib.error
 
-# ===== ЧЁРНЫЙ ЯЩИК + ХЛЕБНЫЕ КРОШКИ (БЕЗ JNIUS НА СТАРТЕ!) =====
-_PRIVATE_DIR_CACHE = None
-
-def _private_dir():
-    """ЛЕНИВЫЙ вызов jnius — только после того, как Kivy запустил Activity"""
-    global _PRIVATE_DIR_CACHE
-    if _PRIVATE_DIR_CACHE is not None:
-        return _PRIVATE_DIR_CACHE
+# ===== ДЕТАЛЬНЫЙ ЛОГГИНГ ЗАПУСКА =====
+def _log(msg):
+    line = f"[LEMUS {time.strftime('%H:%M:%S')}] {msg}"
+    print(line, file=sys.stderr, flush=True)
     try:
-        from jnius import autoclass
-        PythonActivity = autoclass("org.kivy.android.PythonActivity")
-        activity = PythonActivity.mActivity
-        if activity is not None:
-            d = activity.getExternalFilesDir(None)
-            if d is not None:
-                p = os.path.join(d.getAbsolutePath(), "LemusStudio")
-                os.makedirs(p, exist_ok=True)
-                _PRIVATE_DIR_CACHE = p
-                return p
-    except Exception:
-        pass
-    p = os.path.join(os.path.expanduser("~"), "LemusStudio")
-    try:
-        os.makedirs(p, exist_ok=True)
-    except Exception:
-        p = "."
-    _PRIVATE_DIR_CACHE = p
-    return p
-
-def _toast(msg):
-    try:
-        from jnius import autoclass
-        Toast = autoclass("android.widget.Toast")
-        PythonActivity = autoclass("org.kivy.android.PythonActivity")
-        activity = PythonActivity.mActivity
-        if activity is None:
-            return
-        Toast.makeText(activity, str(msg), Toast.LENGTH_LONG).show()
+        with open("startup_debug.log", "a", encoding="utf-8") as f:
+            f.write(line + "\n")
     except Exception:
         pass
 
-def _stage(msg):
-    text = time.strftime("%H:%M:%S") + " " + str(msg) + "\n"
-    try:
-        with open("startup.log", "a", encoding="utf-8") as f:
-            f.write(text)
-        return
-    except Exception:
-        pass
-    try:
-        with open(os.path.join(_private_dir(), "startup.log"), "a", encoding="utf-8") as f:
-            f.write(text)
-    except Exception:
-        pass
+_log("=== STARTUP BEGIN ===")
+_log(f"Python {sys.version}")
+_log(f"Platform: {sys.platform}")
 
-def _crash_paths():
-    paths = ["crash.log"]
-    try:
-        paths.append(os.path.join(_private_dir(), "crash.log"))
-    except Exception:
-        pass
-    return paths
+# ===== ИМПОРТЫ С FALLBACK =====
+_log("Importing kivy...")
+try:
+    from kivy.lang import Builder
+    from kivy.utils import platform
+    from kivy.core.audio import SoundLoader
+    from kivy.clock import Clock
+    from kivy.metrics import dp
+    _log("✅ kivy core imported")
+except Exception as e:
+    _log(f"❌ kivy import failed: {e}")
+    raise
 
-def _crash_hook(t, v, tb):
-    text = "".join(traceback.format_exception(t, v, tb))
-    for p in _crash_paths():
+_log("Importing kivymd...")
+try:
+    from kivymd.app import MDApp
+    from kivymd.uix.boxlayout import MDBoxLayout
+    from kivymd.uix.scrollview import MDScrollView
+    from kivymd.uix.toolbar import MDTopAppBar
+    from kivymd.uix.bottomnavigation import MDBottomNavigation, MDBottomNavigationItem
+    from kivymd.uix.card import MDCard
+    from kivymd.uix.textfield import MDTextField
+    from kivymd.uix.button import MDRaisedButton, MDIconButton, MDFlatButton
+    from kivymd.uix.dialog import MDDialog
+    from kivymd.uix.filemanager import MDFileManager
+    from kivymd.uix.label import MDLabel
+    from kivymd.uix.progressbar import MDProgressBar
+    from kivymd.uix.switch import MDSwitch
+    from kivymd.uix.list import (MDList, TwoLineAvatarIconListItem, IconLeftWidget,
+                                 IconRightWidget, CheckboxLeftWidget)
+    from kivymd.toast import toast
+    
+    # MDSeparator — главная проблема прошлой сборки
+    try:
+        from kivymd.uix.divider import MDSeparator
+        _log("✅ MDSeparator from kivymd.uix.divider")
+    except ImportError:
         try:
-            with open(p, "a", encoding="utf-8") as f:
-                f.write("\n=== CRASH " + time.strftime("%Y-%m-%d %H:%M:%S") + " ===\n")
-                f.write(text)
-        except Exception:
-            pass
-    _toast("CRASH: " + str(v)[:140])
-    sys.stderr.write(text)
-    sys.__excepthook__(t, v, tb)
+            from kivymd.uix.separator import MDSeparator
+            _log("✅ MDSeparator from kivymd.uix.separator")
+        except ImportError:
+            _log("⚠️ MDSeparator not found, using fallback")
+            class MDSeparator(MDBoxLayout):
+                def __init__(self, **kwargs):
+                    kwargs.setdefault('size_hint_y', None)
+                    kwargs.setdefault('height', '1dp')
+                    kwargs.setdefault('md_bg_color', [0.5, 0.5, 0.5, 1])
+                    super().__init__(**kwargs)
+    
+    _log("✅ kivymd imported")
+except Exception as e:
+    _log(f"❌ kivymd import failed: {e}")
+    traceback.print_exc()
+    raise
 
-sys.excepthook = _crash_hook
+_log("All imports successful")
 
-_stage("=== NEW LAUNCH v2.6.7 ===")
-_stage("imports: top-level ok")
-# ============================================================================
-
-from kivy.lang import Builder
-from kivy.utils import platform
-from kivy.core.audio import SoundLoader
-from kivy.clock import Clock
-from kivy.metrics import dp
-from kivymd.app import MDApp
-from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.scrollview import MDScrollView
-from kivymd.uix.toolbar import MDTopAppBar
-from kivymd.uix.bottomnavigation import MDBottomNavigation, MDBottomNavigationItem
-from kivymd.uix.card import MDCard
-from kivymd.uix.textfield import MDTextField
-from kivymd.uix.separator import MDSeparator
-from kivymd.uix.button import MDRaisedButton, MDIconButton, MDFlatButton
-from kivymd.uix.dialog import MDDialog
-from kivymd.uix.filemanager import MDFileManager
-from kivymd.uix.label import MDLabel
-from kivymd.uix.progressbar import MDProgressBar
-from kivymd.uix.switch import MDSwitch
-from kivymd.uix.list import (MDList, TwoLineAvatarIconListItem, IconLeftWidget,
-                             IconRightWidget, CheckboxLeftWidget)
-from kivymd.toast import toast
-
-_stage("imports: kivy/kivymd ok")
-
-CURRENT_VERSION = "2.6.7"
+# ===== КОНСТАНТЫ =====
+CURRENT_VERSION = "2.9.0"
 CONFIG_FILE = "lemus_studio_config.json"
 PROJECTS_FILE = "lemus_projects_db.json"
 HISTORY_FILE = "lemus_prompts_history.json"
-ONBOARDING_FLAG = "onboarding_seen_v2.6"
+ONBOARDING_FLAG = "onboarding_seen_v2.9"
 MASTER_KEYWORD = "LemusAI"
 MASTER_HASH = hashlib.sha256(MASTER_KEYWORD.encode()).hexdigest()
 
@@ -154,16 +119,25 @@ def get_storage_root():
     if platform == "android":
         candidates.append("/storage/emulated/0/Music/LemusStudio")
         try:
-            candidates.append(_private_dir())
+            from jnius import autoclass
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            activity = PythonActivity.mActivity
+            if activity:
+                d = activity.getExternalFilesDir(None)
+                if d:
+                    candidates.append(os.path.join(d.getAbsolutePath(), "LemusStudio"))
         except Exception:
             pass
     else:
         candidates.append(os.path.join(os.path.expanduser("~"), "LemusStudio"))
+    
     for p in candidates:
         if _writable(p):
             _STORAGE_ROOT = p
+            _log(f"Storage root: {p}")
             return p
     _STORAGE_ROOT = candidates[-1] if candidates else "."
+    _log(f"Storage root (fallback): {_STORAGE_ROOT}")
     return _STORAGE_ROOT
 
 ONBOARD_CARDS = [
@@ -717,7 +691,7 @@ MDBoxLayout:
 
 class LemusStudioApp(MDApp):
     def build(self):
-        _stage("build: enter")
+        _log("build() called")
         self.theme_cls.theme_style = "Dark"
         self.theme_cls.primary_palette = "DeepPurple"
         self.theme_cls.accent_palette = "Orange"
@@ -744,16 +718,16 @@ class LemusStudioApp(MDApp):
             exit_manager=self.exit_file_manager,
             select_path=self.on_file_selected,
         )
-        _stage("build: filemanager ok")
+        _log("build: filemanager ok")
 
         self.load_config()
         self.load_projects()
         self.load_history()
-        _stage("build: data loaded, root=" + get_storage_root())
+        _log("build: data loaded, root=" + get_storage_root())
         return Builder.load_string(KV)
 
     def on_start(self):
-        _stage("on_start: enter")
+        _log("on_start() called")
         def safe(fn, name):
             try:
                 fn()
@@ -775,7 +749,7 @@ class LemusStudioApp(MDApp):
             if not os.path.exists(os.path.join(self.get_data_path(), ONBOARDING_FLAG)):
                 self.show_onboarding()
         safe(_onb, "onboarding")
-        _stage("on_start: done")
+        _log("on_start() complete")
 
     def _request_runtime_permissions(self):
         if platform != "android":
@@ -789,9 +763,9 @@ class LemusStudioApp(MDApp):
                 Permission.POST_NOTIFICATIONS,
             ]
             request_permissions(perms)
-            _stage("runtime permissions requested")
+            _log("runtime permissions requested")
         except Exception as e:
-            _stage(f"runtime perms error: {e}")
+            _log(f"runtime perms error: {e}")
 
     def _request_all_files_access(self):
         if platform != "android":
@@ -800,7 +774,7 @@ class LemusStudioApp(MDApp):
             from jnius import autoclass
             Environment = autoclass("android.os.Environment")
             if Environment.isExternalStorageManager():
-                _stage("all-files already granted")
+                _log("all-files already granted")
                 return
             Intent = autoclass("android.content.Intent")
             Settings = autoclass("android.provider.Settings")
@@ -808,20 +782,20 @@ class LemusStudioApp(MDApp):
             PythonActivity = autoclass("org.kivy.android.PythonActivity")
             activity = PythonActivity.mActivity
             if activity is None:
-                _stage("all-files: activity None, skip")
+                _log("all-files: activity None, skip")
                 return
             intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
             intent.setData(Uri.parse("package:" + activity.getPackageName()))
             activity.startActivity(intent)
-            _stage("all-files request sent")
+            _log("all-files request sent")
         except Exception as e:
-            _stage(f"all-files error: {e}")
+            _log(f"all-files error: {e}")
 
     def show_crash_log(self):
         parts = []
         seen = set()
-        for name in ["startup.log", "crash.log"]:
-            for base in [".", _private_dir()]:
+        for name in ["startup_debug.log", "crash.log"]:
+            for base in [".", get_storage_root()]:
                 p = os.path.join(base, name)
                 if p in seen or not os.path.exists(p):
                     continue
@@ -840,11 +814,10 @@ class LemusStudioApp(MDApp):
         d.open()
 
     def send_logs_to_me(self):
-        """Собирает логи и открывает системный шеринг (Telegram/WhatsApp/Email)"""
         import tempfile
         chunks = []
-        for name in ["startup.log", "crash.log"]:
-            for base in [".", _private_dir()]:
+        for name in ["startup_debug.log", "crash.log"]:
+            for base in [".", get_storage_root()]:
                 p = os.path.join(base, name)
                 try:
                     if os.path.exists(p):
@@ -884,7 +857,6 @@ class LemusStudioApp(MDApp):
                 toast(f"Share error: {str(e)[:60]}")
         self._show_info("📋 Логи для отправки", body[:1500])
 
-    # ===== ХРАНИЛИЩЕ =====
     def get_storage_path(self):
         return get_storage_root()
 
@@ -897,7 +869,7 @@ class LemusStudioApp(MDApp):
         return path
 
     def _migrate_old_data(self):
-        sources = [self.user_data_dir, _private_dir(), "."]
+        sources = [self.user_data_dir, get_storage_root(), "."]
         for src_dir in sources:
             for fname in [CONFIG_FILE, PROJECTS_FILE, HISTORY_FILE, ONBOARDING_FLAG]:
                 for cand in [os.path.join(src_dir, fname), os.path.join(src_dir, ".data", fname)]:
@@ -908,7 +880,6 @@ class LemusStudioApp(MDApp):
                     except Exception:
                         pass
 
-    # ===== ПЛЕЕР =====
     def play_item(self, item):
         if item in self.last_rendered_items:
             idx = self.last_rendered_items.index(item)
@@ -987,7 +958,6 @@ class LemusStudioApp(MDApp):
         self.root.ids.player_title.text = ""
         self.root.ids.player_pos.text = "0:00"
 
-    # ===== АКТИВАЦИЯ =====
     def _import_keys_from_json(self, path):
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -1010,10 +980,12 @@ class LemusStudioApp(MDApp):
             self.update_activation_status()
             n = len(self.config.get("gemini_keys", []))
             toast(f"👑 Ключи загружены! ({n} Gemini)")
+            _log(f"Keys imported: {n} Gemini keys")
         except json.JSONDecodeError:
             toast("❌ Ошибка парсинга JSON")
         except Exception as e:
             toast(f"❌ {str(e)[:50]}")
+            _log(f"Key import error: {e}")
 
     def unlock_master_keys(self):
         pwd = self.root.ids.master_password_input.text.strip()
@@ -1026,7 +998,7 @@ class LemusStudioApp(MDApp):
     def _fetch_remote_keys_thread(self):
         try:
             req = urllib.request.Request(REMOTE_KEYS_URL,
-                headers={"User-Agent": "LemusStudio/2.6", "Accept": "application/json"})
+                headers={"User-Agent": "LemusStudio/2.9", "Accept": "application/json"})
             with urllib.request.urlopen(req, timeout=15) as r:
                 remote = json.loads(r.read().decode("utf-8"))
             for k, v in remote.items():
@@ -1045,8 +1017,10 @@ class LemusStudioApp(MDApp):
             self.update_activation_status()
             self.root.ids.master_password_input.text = ""
             toast("👑 LemusAI активирован!")
+            _log("Keys activated via gist")
         else:
             toast(f"❌ {err[:60]}")
+            _log(f"Gist activation error: {err}")
 
     def reset_all_keys(self):
         self.config = EMPTY_CONFIG.copy()
@@ -1074,7 +1048,6 @@ class LemusStudioApp(MDApp):
             label.text = "🔴 Не активировано"
             label.theme_text_color = "Secondary"
 
-    # ===== ДИАГНОСТИКА =====
     def run_key_diagnostics(self):
         toast("🩺 Диагностика запущена...")
         threading.Thread(target=self._diag_thread).start()
@@ -1136,7 +1109,6 @@ class LemusStudioApp(MDApp):
             buttons=[MDRaisedButton(text="OK", on_release=lambda i: self.diag_dialog.dismiss())])
         self.diag_dialog.open()
 
-    # ===== ОНБОРДИНГ / ГАЙД / КАЛЬКУЛЯТОР =====
     def show_onboarding(self):
         self.onboard_idx = 0
         self._render_onboard_card()
@@ -1247,7 +1219,6 @@ class LemusStudioApp(MDApp):
             buttons=[MDRaisedButton(text="OK", on_release=lambda i: d.dismiss())])
         d.open()
 
-    # ===== ИСТОРИЯ =====
     def load_history(self):
         p = os.path.join(self.get_data_path(), HISTORY_FILE)
         if os.path.exists(p):
@@ -1292,7 +1263,6 @@ class LemusStudioApp(MDApp):
                      MDRaisedButton(text="Повторить последний", on_release=use_last)])
         dlg.open()
 
-    # ===== КОНФИГ =====
     def load_config(self):
         self._migrate_old_data()
         p = os.path.join(self.get_data_path(), CONFIG_FILE)
@@ -1343,7 +1313,6 @@ class LemusStudioApp(MDApp):
         else:
             toast("🔴 Ключи не настроены")
 
-    # ===== ФАЙЛ-МЕНЕДЖЕР =====
     def open_file_manager(self, purpose="voice"):
         self.file_manager_purpose = purpose
         start = "/storage/emulated/0" if platform == "android" else os.path.expanduser("~")
@@ -1370,7 +1339,6 @@ class LemusStudioApp(MDApp):
     def exit_file_manager(self, *args):
         self.file_manager.close()
 
-    # ===== УДАРЕНИЯ =====
     def _prepare_lyrics_for_tts(self, lyrics):
         if not lyrics:
             return ""
@@ -1378,7 +1346,6 @@ class LemusStudioApp(MDApp):
         t = re.sub(r"[ \t]+", " ", t)
         return t.strip()
 
-    # ===== LLM =====
     def _call_gemini_native(self, prompt, api_key, model=None):
         model = model or self.config.get("gemini_model", "gemini-3.6-flash")
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -1472,7 +1439,6 @@ class LemusStudioApp(MDApp):
         meta["_critic"] = crit
         return meta
 
-    # ===== FISH =====
     def _fish_clone(self, lyrics, sample_path):
         fish_key = self.config.get("fish_key", "")
         if not fish_key or not sample_path:
@@ -1508,7 +1474,6 @@ class LemusStudioApp(MDApp):
             print(f"Fish: {e}")
             return None
 
-    # ===== РЕНДЕРЫ =====
     def start_single_generation(self):
         t = self.root.ids.s_title_input.text.strip()
         g = self.root.ids.s_genre_input.text.strip()
@@ -1618,7 +1583,6 @@ class LemusStudioApp(MDApp):
         if prog is not None:
             prog.value = val
 
-    # ===== АЛЬБОМЫ =====
     def get_albums(self):
         albums = {}
         for p in self.projects:
@@ -1747,12 +1711,11 @@ class LemusStudioApp(MDApp):
             Clock.schedule_once(lambda dt: self.root.ids.alb_status_label.__setattr__(
                 "text", f"❌ {str(e)[:100]}"), 0)
 
-    # ===== АУДИО/ОБЛОЖКА/ФОРМАТЫ =====
     def _generate_image(self, prompt):
         try:
             enc = urllib.parse.quote(prompt[:180])
             url = f"https://image.pollinations.ai/prompt/{enc}?width=3000&height=3000&nologo=true"
-            req = urllib.request.Request(url, headers={"User-Agent": "LemusStudio/2.6"})
+            req = urllib.request.Request(url, headers={"User-Agent": "LemusStudio/2.9"})
             with urllib.request.urlopen(req, timeout=60) as r:
                 return r.read()
         except Exception:
@@ -1775,7 +1738,7 @@ class LemusStudioApp(MDApp):
         try:
             enc = urllib.parse.quote(prompt[:160])
             req = urllib.request.Request(f"https://audio.pollinations.ai/prompt/{enc}",
-                                          headers={"User-Agent": "LemusStudio/2.6"})
+                                          headers={"User-Agent": "LemusStudio/2.9"})
             with urllib.request.urlopen(req, timeout=60) as r:
                 d = r.read()
                 if len(d) > 5000:
@@ -1896,7 +1859,6 @@ class LemusStudioApp(MDApp):
         except Exception as e:
             print(f"ID3: {e}")
 
-    # ===== МЕДИАТЕКА =====
     def load_projects(self):
         p = os.path.join(self.get_data_path(), PROJECTS_FILE)
         if os.path.exists(p):
@@ -2037,7 +1999,6 @@ class LemusStudioApp(MDApp):
         else:
             toast(f"Файл: {mp3}")
 
-    # ===== ZIP =====
     def export_project_zip(self, item):
         try:
             storage = self.get_storage_path()
@@ -2065,7 +2026,6 @@ class LemusStudioApp(MDApp):
         except Exception as e:
             toast(f"❌ ZIP: {str(e)[:50]}")
 
-    # ===== YANDEX / УВЕДОМЛЕНИЯ / OTA =====
     def backup_to_yandex(self):
         token = self.config.get("yandex_token", "")
         if not token:
@@ -2132,7 +2092,7 @@ class LemusStudioApp(MDApp):
     def _check_update_thread(self, silent):
         try:
             req = urllib.request.Request(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
-                headers={"User-Agent": "LemusStudio/2.6", "Accept": "application/vnd.github.v3+json"})
+                headers={"User-Agent": "LemusStudio/2.9", "Accept": "application/vnd.github.v3+json"})
             with urllib.request.urlopen(req, timeout=10) as r:
                 data = json.loads(r.read().decode())
                 remote = data.get("tag_name", "").lstrip("v")
@@ -2200,8 +2160,15 @@ class LemusStudioApp(MDApp):
 
 
 if __name__ == "__main__":
+    _log("=== MAIN ENTRY POINT ===")
     try:
         LemusStudioApp().run()
     except Exception as e:
+        _log(f"FATAL ERROR: {e}")
         traceback.print_exc()
-        _crash_hook(type(e), e, e.__traceback__)
+        try:
+            with open("crash_fatal.log", "w", encoding="utf-8") as f:
+                f.write(f"Fatal error at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(traceback.format_exc())
+        except Exception:
+            pass
