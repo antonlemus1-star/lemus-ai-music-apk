@@ -38,6 +38,11 @@ jobs:
           pip install --upgrade pip
           pip install buildozer cython==0.29.36
 
+      - name: Pin Cython for build isolation
+        run: |
+          echo "cython==3.0.11" > /tmp/p4a-constraints.txt
+          echo "PIP_CONSTRAINT=/tmp/p4a-constraints.txt" >> $GITHUB_ENV
+
       - name: Purge all caches
         run: |
           rm -rf ~/.cache/pip ~/.buildozer .buildozer /tmp/pip-* || true
@@ -66,7 +71,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LemusStudio-v2.7.1-FINAL
+          name: LemusStudio-v2.7.2-FINAL
           path: bin/*.apk
 
       - name: Create Release
