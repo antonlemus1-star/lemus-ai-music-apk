@@ -38,19 +38,10 @@ jobs:
           pip install --upgrade pip
           pip install buildozer cython==0.29.36
 
-      - name: Cache Buildozer (новая версия — v2)
-        uses: actions/cache@v4
-        with:
-          path: ~/.buildozer
-          key: buildozer-${{ runner.os }}-v2-${{ hashFiles('buildozer.spec') }}
-          restore-keys: |
-            buildozer-${{ runner.os }}-v2-
-
-      - name: Force clean cached Python build (если кэш вернул плохой Python)
+      - name: Clean Buildozer cache completely (убираем Python 3.14)
         run: |
-          rm -rf ~/.buildozer/android/platform/build-arm64-v8a/build/other_builds/libpython3
-          rm -rf ~/.buildozer/android/platform/build-arm64-v8a/build/other_builds/hostpython3
-          rm -rf ~/.buildozer/android/platform/build-arm64-v8a/dists/*/build/other_builds/libpython3
+          rm -rf ~/.buildozer
+          rm -rf .buildozer
 
       - name: Syntax Check
         run: python -m py_compile main.py
