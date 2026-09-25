@@ -12,7 +12,6 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-22.04
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -39,69 +38,40 @@ jobs:
           pip install --upgrade pip
           pip install buildozer cython==0.29.36
 
-      - name: Pin Cython 3.0.11 for build isolation
+      - name: Pin Cython for build isolation
         run: |
           echo "cython==3.0.11" > /tmp/p4a-constraints.txt
           echo "PIP_CONSTRAINT=/tmp/p4a-constraints.txt" >> $GITHUB_ENV
 
-      # ЯДЕРНАЯ ОЧИСТКА КЭША (убиваем старые x86_64 .so/.whl)
-      - name: Nuclear cleanup of ALL caches (fix x86_64 leak)
+      - name: Purge all caches
         run: |
-          rm -rf ~/.cache/pip || true
-          rm -rf ~/.buildozer || true
-          rm -rf .buildozer || true
-          find /home/runner -name "*.whl" -delete 2>/dev/null || true
-          rm -rf /tmp/pip-* || true
-          echo "✅ All pip/buildozer caches purged"
+          rm -rf ~/.cache/pip ~/.buildozer .buildozer /tmp/pip-* || true
 
       - name: Syntax Check
         run: python -m py_compile main.py
 
-      # СБОРКА БЕЗ PIP_NO_INDEX (pip может качать KivyMD и другие online-зависимости)
-      - name: Build APK (online deps allowed, auto-accept licenses)
-        env:
-          PIP_DISABLE_PIP_VERSION_CHECK: "1"
-          PYTHONNOUSERSITE: "1"
+      - name: Build APK (online pip, auto-accept licenses)
         run: yes | buildozer android debug
 
-      # ПРОВЕРКА АРХИТЕКТУРЫ ВНУТРИ APK (гарантия отсутствия x86_64 мусора)
-      - name: VERIFY APK architecture integrity
+      - name: VERIFY whole APK for host-tagged binaries
         run: |
           cd bin
-          if ! ls *.apk >/dev/null 2>&1; then
-            echo "❌ No APK produced!"
+          ls *.apk || { echo "❌ No APK"; exit 1; }
+          mkdir -p _v && cd _v
+          unzip -q ../$(ls ../*.apk | head -n1)
+          BAD=$(find . -type f \( -name '*x86_64*' -o -name '*linux-gnu*' -o -name '*amd64*' \) | wc -l)
+          echo "Host-tagged files inside APK: $BAD"
+          if [ "$BAD" != "0" ]; then
+            find . -type f \( -name '*x86_64*' -o -name '*linux-gnu*' -o -name '*amd64*' \) | head -30
+            echo "🚨 APK contains desktop binaries — will crash on phone. Failing build."
             exit 1
           fi
-          mkdir -p _verify && cd _verify
-          unzip -q ../$(ls ../*.apk | head -n1) 'lib/*' || { echo "Unzip failed"; exit 1; }
-          
-          BAD_COUNT=$(find lib -type f \( -name '*x86_64*' -o -name '*amd64*' -o -name '*linux-gnu*' \) 2>/dev/null | wc -l)
-          GOOD_COUNT=$(find lib -type f -name '*aarch64*android*' 2>/dev/null | wc -l)
-          
-          echo "=== ARCHITECTURE REPORT ==="
-          echo "Suspicious files (x86/amd64/linux-gnu): $BAD_COUNT"
-          echo "Valid Android ARM64 files: $GOOD_COUNT"
-          
-          if [ "$BAD_COUNT" != "0" ]; then
-            echo ""
-            echo "🚨 CRITICAL: Found non-Android binaries inside APK:"
-            find lib -type f \( -name '*x86_64*' -o -name '*amd64*' -o -name '*linux-gnu*' \) 2>/dev/null
-            echo ""
-            echo "This causes instant crash on phone. Aborting."
-            exit 1
-          fi
-          
-          if [ "$GOOD_COUNT" == "0" ]; then
-            echo "⚠️ Warning: No valid aarch64-android libs detected either."
-          else
-            echo "✅ All libraries are native Android ARM64"
-          fi
-          cd .. && rm -rf _verify
+          echo "✅ APK clean: only Android ARM64 binaries"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LemusStudio-v2.6.9-ARM64-CLEAN
+          name: LemusStudio-v2.7.0-FINAL
           path: bin/*.apk
 
       - name: Create Release
