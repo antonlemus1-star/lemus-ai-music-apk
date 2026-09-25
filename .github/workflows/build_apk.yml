@@ -44,21 +44,61 @@ jobs:
           echo "cython==3.0.11" > /tmp/p4a-constraints.txt
           echo "PIP_CONSTRAINT=/tmp/p4a-constraints.txt" >> $GITHUB_ENV
 
-      - name: Clean Buildozer cache
+      - name: Nuclear cleanup of ALL caches (fix x86_64 leak)
         run: |
-          rm -rf ~/.buildozer
-          rm -rf .buildozer
+          rm -rf ~/.cache/pip || true
+          rm -rf ~/.buildozer || true
+          rm -rf .buildozer || true
+          rm -rf /home/runner/.local/lib/python*/site-packages || true
+          find /home/runner -name "*.whl" -delete 2>/dev/null || true
+          find /home/runner -path "*arm64*" -prune -o -name "*.so" -print | grep -i 'x86\|amd64' | head -50 || true
 
       - name: Syntax Check
         run: python -m py_compile main.py
 
-      - name: Build APK (auto-accept licenses)
+      - name: Build APK (auto-accept licenses, offline mode forced)
+        env:
+          PIP_NO_INDEX: "1"
+          BUILDOZER_DEBUG: "1"
         run: yes | buildozer android debug
+
+      - name: VERIFY APK architecture integrity
+        run: |
+          cd bin
+          if ! ls *.apk >/dev/null 2>&1; then
+            echo "❌ No APK produced!"
+            exit 1
+          fi
+          mkdir -p _verify && cd _verify
+          unzip -q ../$(ls ../*.apk | head -n1) 'lib/*' || { echo "Unzip failed"; exit 1; }
+          
+          BAD_COUNT=$(find lib -type f \( -name '*x86_64*' -o -name '*amd64*' -o -name '*linux-gnu*' \) 2>/dev/null | wc -l)
+          GOOD_COUNT=$(find lib -type f -name '*aarch64*android*' 2>/dev/null | wc -l)
+          
+          echo "=== ARCHITECTURE REPORT ==="
+          echo "Suspicious files (x86/amd64/linux-gnu): $BAD_COUNT"
+          echo "Valid Android ARM64 files: $GOOD_COUNT"
+          
+          if [ "$BAD_COUNT" != "0" ]; then
+            echo ""
+            echo "🚨 CRITICAL: Found non-Android binaries inside APK:"
+            find lib -type f \( -name '*x86_64*' -o -name '*amd64*' -o -name '*linux-gnu*' \) 2>/dev/null
+            echo ""
+            echo "This causes instant crash on phone. Aborting."
+            exit 1
+          fi
+          
+          if [ "$GOOD_COUNT" == "0" ]; then
+            echo "⚠️ Warning: No valid aarch64-android libs detected either."
+          else
+            echo "✅ All libraries are native Android ARM64"
+          fi
+          cd .. && rm -rf _verify
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LemusStudio-v2.6.6-APK
+          name: LemusStudio-v2.6.7-ARM64-CLEAN
           path: bin/*.apk
 
       - name: Create Release
