@@ -10,7 +10,6 @@ def _private_dir():
     global _PRIVATE_DIR_CACHE
     if _PRIVATE_DIR_CACHE is not None:
         return _PRIVATE_DIR_CACHE
-    # Сначала пробуем jnius (но только когда он реально готов)
     try:
         from jnius import autoclass
         PythonActivity = autoclass("org.kivy.android.PythonActivity")
@@ -24,7 +23,6 @@ def _private_dir():
                 return p
     except Exception:
         pass
-    # Fallback: домашняя директория (работает всегда)
     p = os.path.join(os.path.expanduser("~"), "LemusStudio")
     try:
         os.makedirs(p, exist_ok=True)
@@ -34,7 +32,6 @@ def _private_dir():
     return p
 
 def _toast(msg):
-    """Toast с защитой от раннего вызова jnius"""
     try:
         from jnius import autoclass
         Toast = autoclass("android.widget.Toast")
@@ -47,16 +44,13 @@ def _toast(msg):
         pass
 
 def _stage(msg):
-    """Безопасная запись этапа — ВСЕГДА работает (без jnius, без Android-разрешений)"""
     text = time.strftime("%H:%M:%S") + " " + str(msg) + "\n"
-    # Попытка 1: текущая директория (всегда доступна на старте)
     try:
         with open("startup.log", "a", encoding="utf-8") as f:
             f.write(text)
         return
     except Exception:
         pass
-    # Попытка 2: приватная папка (доступна на Android после start)
     try:
         with open(os.path.join(_private_dir(), "startup.log"), "a", encoding="utf-8") as f:
             f.write(text)
@@ -81,13 +75,12 @@ def _crash_hook(t, v, tb):
         except Exception:
             pass
     _toast("CRASH: " + str(v)[:140])
-    # Дублируем в stderr
     sys.stderr.write(text)
     sys.__excepthook__(t, v, tb)
 
 sys.excepthook = _crash_hook
 
-_stage("=== NEW LAUNCH v2.6.6 ===")
+_stage("=== NEW LAUNCH v2.6.7 ===")
 _stage("imports: top-level ok")
 # ============================================================================
 
@@ -116,7 +109,7 @@ from kivymd.toast import toast
 
 _stage("imports: kivy/kivymd ok")
 
-CURRENT_VERSION = "2.6.6"
+CURRENT_VERSION = "2.6.7"
 CONFIG_FILE = "lemus_studio_config.json"
 PROJECTS_FILE = "lemus_projects_db.json"
 HISTORY_FILE = "lemus_prompts_history.json"
@@ -623,6 +616,12 @@ MDBoxLayout:
                         md_bg_color: 0.5, 0.3, 0.1, 1
                         on_release: app.show_crash_log()
 
+                    MDRaisedButton:
+                        text: "📤 Отправить логи (Telegram/WA)"
+                        size_hint_x: 1
+                        md_bg_color: 0.2, 0.5, 0.8, 1
+                        on_release: app.send_logs_to_me()
+
                     MDSeparator:
                         height: "2dp"
 
@@ -779,7 +778,6 @@ class LemusStudioApp(MDApp):
         _stage("on_start: done")
 
     def _request_runtime_permissions(self):
-        """Динамический запрос runtime-разрешений (Android 6+)"""
         if platform != "android":
             return
         try:
@@ -796,7 +794,6 @@ class LemusStudioApp(MDApp):
             _stage(f"runtime perms error: {e}")
 
     def _request_all_files_access(self):
-        """Запрос MANAGE_EXTERNAL_STORAGE (Android 11+)"""
         if platform != "android":
             return
         try:
@@ -841,6 +838,51 @@ class LemusStudioApp(MDApp):
         d = MDDialog(title="📋 Логи запуска и падений", text=text,
             buttons=[MDRaisedButton(text="OK", on_release=lambda i: d.dismiss())])
         d.open()
+
+    def send_logs_to_me(self):
+        """Собирает логи и открывает системный шеринг (Telegram/WhatsApp/Email)"""
+        import tempfile
+        chunks = []
+        for name in ["startup.log", "crash.log"]:
+            for base in [".", _private_dir()]:
+                p = os.path.join(base, name)
+                try:
+                    if os.path.exists(p):
+                        with open(p, "r", encoding="utf-8") as f:
+                            data = f.read()[-3000:]
+                        if data.strip():
+                            chunks.append(f"===== {name} =====\n{data}")
+                        break
+                except Exception:
+                    pass
+        if not chunks:
+            toast("Логи пусты 🤷 Попробуй «Показать логи»")
+            return
+        body = "\n\n".join(chunks)[:6000]
+        tmp = os.path.join(tempfile.gettempdir(), "lemus_logs.txt")
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(body)
+        except Exception:
+            toast("Не удалось создать файл логов")
+            return
+        if platform == "android":
+            try:
+                from jnius import autoclass
+                Intent = autoclass("android.content.Intent")
+                Uri = autoclass("android.net.Uri")
+                File = autoclass("java.io.File")
+                PythonActivity = autoclass("org.kivy.android.PythonActivity")
+                intent = Intent(Intent.ACTION_SEND)
+                intent.setType("text/plain")
+                intent.putExtra(Intent.EXTRA_STREAM, Uri.fromFile(File(tmp)))
+                intent.putExtra(Intent.EXTRA_SUBJECT, "Lemus Studio logs v" + CURRENT_VERSION)
+                PythonActivity.mActivity.startActivity(
+                    Intent.createChooser(intent, "Отправить логи"))
+                return
+            except Exception as e:
+                toast(f"Share error: {str(e)[:60]}")
+        self._show_info("📋 Логи для отправки", body[:1500])
 
     # ===== ХРАНИЛИЩЕ =====
     def get_storage_path(self):
