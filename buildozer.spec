@@ -4,9 +4,10 @@ package.name = lemusaimusicstudio
 package.domain = org.lemus.music
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json
-version = 2.6.2
+version = 2.6.3
 
-requirements = python3,kivy,kivymd,pillow,mutagen
+# Проверенный комплект: Python 3.11 + Kivy 2.3.0 + KivyMD 1.2.0
+requirements = python3==3.11.9,kivy==2.3.0,kivymd==1.2.0,pillow,mutagen
 
 orientation = portrait
 fullscreen = 0
@@ -18,8 +19,8 @@ android.ndk = 25b
 android.archs = arm64-v8a
 android.allow_backup = True
 
-# Явно указываем Python 3.11 (стабильный, совместимый с Kivy)
-p4a.python_version = 3.11
+# Стабильная ветка python-for-android вместо master-2026
+p4a.branch = release-2024.01.21
 
 [buildozer]
 log_level = 2
