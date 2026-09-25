@@ -4,10 +4,10 @@ package.name = lemusaimusicstudio
 package.domain = org.lemus.music
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json
-version = 2.6.6
+version = 2.6.7
 
-# Явные стабильные версии + pyjnius для Android-интеграции
-requirements = python3==3.10.14,kivy==2.3.0,kivymd==1.2.0,pillow,mutagen,pyjnius
+# КЛЮЧЕВОЕ: python3 и hostpython3 ОДНОЙ версии — иначе p4a падает
+requirements = python3==3.11.9,hostpython3==3.11.9,kivy==2.3.0,kivymd==1.2.0,pillow,mutagen,pyjnius
 
 orientation = portrait
 fullscreen = 0
