@@ -6,7 +6,7 @@ source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json
 version = 2.6.2
 
-requirements = python3,kivy==2.3.0,kivymd==1.2.0,pillow,mutagen
+requirements = python3,kivy,kivymd,pillow,mutagen
 
 orientation = portrait
 fullscreen = 0
@@ -17,6 +17,9 @@ android.minapi = 21
 android.ndk = 25b
 android.archs = arm64-v8a
 android.allow_backup = True
+
+# Явно указываем Python 3.11 (стабильный, совместимый с Kivy)
+p4a.python_version = 3.11
 
 [buildozer]
 log_level = 2
