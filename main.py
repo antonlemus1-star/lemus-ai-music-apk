@@ -1,5 +1,33 @@
 import os, sys, io, json, threading, hashlib, base64, math, time, struct, wave, re, zipfile, shutil
+import traceback
 import urllib.request, urllib.parse, urllib.error
+
+# ===== ЧЁРНЫЙ ЯЩИК: пишет причину падения в Music/LemusStudio/crash.log =====
+def _crash_path():
+    try:
+        from android.storage import primary_external_storage_path
+        base = primary_external_storage_path()
+    except Exception:
+        base = os.path.expanduser("~")
+    p = os.path.join(base, "Music", "LemusStudio")
+    try:
+        os.makedirs(p, exist_ok=True)
+    except Exception:
+        p = "."
+    return os.path.join(p, "crash.log")
+
+def _crash_hook(t, v, tb):
+    try:
+        with open(_crash_path(), "a", encoding="utf-8") as f:
+            f.write("\n=== CRASH " + time.strftime("%Y-%m-%d %H:%M:%S") + " ===\n")
+            f.write("".join(traceback.format_exception(t, v, tb)))
+    except Exception:
+        pass
+    sys.__excepthook__(t, v, tb)
+
+sys.excepthook = _crash_hook
+# ============================================================================
+
 from kivy.lang import Builder
 from kivy.utils import platform
 from kivy.core.audio import SoundLoader
@@ -23,7 +51,7 @@ from kivymd.uix.list import (MDList, TwoLineAvatarIconListItem, IconLeftWidget,
                              IconRightWidget, CheckboxLeftWidget)
 from kivymd.toast import toast
 
-CURRENT_VERSION = "2.6.2"
+CURRENT_VERSION = "2.6.3"
 CONFIG_FILE = "lemus_studio_config.json"
 PROJECTS_FILE = "lemus_projects_db.json"
 HISTORY_FILE = "lemus_prompts_history.json"
@@ -51,7 +79,7 @@ ONBOARD_CARDS = [
     {"icon": "🎛", "title": "AI Music Studio",
      "body": "Автономная продюсерская станция.\n\n• 🎵 Сингл\n• 🔥 Вирусный хит\n• 💿 EP + досоздание треков\n• ✍️ По промпту\n• 💎 Доход со стримингов"},
     {"icon": "🎧", "title": "Встроенный плеер",
-     "body": "• Панель плеера внизу экрана\n• ⏮ ▶/ ⏭ ⏹ + таймер\n• Очередь: играет весь список подряд\n• Шаринг трека в мессенджеры"},
+     "body": "• Панель плеера внизу экрана\n• ⏮ ▶/⏸ ⏭ ⏹ + таймер\n• Очередь: играет весь список подряд\n• Шаринг трека в мессенджеры"},
     {"icon": "🎤", "title": "Голос и ударения",
      "body": "• Демоголос 10-30 сек → клон Fish.audio\n• Ударения через + (авто-очистка перед озвучкой)\n• Клон копирует интонацию образца"},
     {"icon": "📦", "title": "Форматы экспорта",
@@ -1347,12 +1375,11 @@ class LemusStudioApp(MDApp):
             self.save_projects()
 
             Clock.schedule_once(lambda dt: self._update_progress(label, prog,
-                f"✅ Готово!\n🧑‍️ Критик: {total}/10 ({verdict})", 100), 0)
+                f"✅ Готово!\n🧑‍⚖️ Критик: {total}/10 ({verdict})", 100), 0)
             Clock.schedule_once(lambda dt: self.refresh_projects_ui(), 0)
             Clock.schedule_once(lambda dt: toast(f"{emoji} '{title}' готов!"), 0)
             self._send_notification("Lemus Studio", f"{emoji} '{title}' готов!")
         except Exception as e:
-            import traceback
             traceback.print_exc()
             Clock.schedule_once(lambda dt: self._update_progress(label, prog, f"❌ {str(e)[:80]}", 0), 0)
 
