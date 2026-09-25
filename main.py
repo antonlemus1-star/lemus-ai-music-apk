@@ -43,12 +43,11 @@ try:
     from kivymd.uix.filemanager import MDFileManager
     from kivymd.uix.label import MDLabel
     from kivymd.uix.progressbar import MDProgressBar
-    from kivymd.uix.switch import MDSwitch
     from kivymd.uix.list import (MDList, TwoLineAvatarIconListItem, IconLeftWidget,
                                  IconRightWidget, CheckboxLeftWidget)
     from kivymd.toast import toast
-    
-    # MDSeparator — главная проблема прошлой сборки
+
+    # MDSeparator — fallback для разных версий KivyMD
     try:
         from kivymd.uix.divider import MDSeparator
         _log("✅ MDSeparator from kivymd.uix.divider")
@@ -57,15 +56,39 @@ try:
             from kivymd.uix.separator import MDSeparator
             _log("✅ MDSeparator from kivymd.uix.separator")
         except ImportError:
-            _log("⚠️ MDSeparator not found, using fallback")
+            _log("⚠️ MDSeparator not found, using fallback class")
             class MDSeparator(MDBoxLayout):
                 def __init__(self, **kwargs):
                     kwargs.setdefault('size_hint_y', None)
                     kwargs.setdefault('height', '1dp')
                     kwargs.setdefault('md_bg_color', [0.5, 0.5, 0.5, 1])
                     super().__init__(**kwargs)
-    
-    _log("✅ kivymd imported")
+
+    # MDSwitch — fallback для разных версий KivyMD (ИСПРАВЛЕНО в v3.0.0)
+    try:
+        from kivymd.uix.switch import MDSwitch
+        _log("✅ MDSwitch from kivymd.uix.switch")
+    except ImportError:
+        try:
+            from kivymd.uix.selectioncontrol import MDSwitch
+            _log("✅ MDSwitch from kivymd.uix.selectioncontrol")
+        except ImportError:
+            try:
+                from kivymd.uix.selection import MDSwitch
+                _log("✅ MDSwitch from kivymd.uix.selection")
+            except ImportError:
+                _log("⚠️ MDSwitch not found, using ToggleButton fallback")
+                from kivy.uix.togglebutton import ToggleButton
+                from kivy.properties import BooleanProperty
+                class MDSwitch(ToggleButton):
+                    active = BooleanProperty(False)
+                    def __init__(self, **kwargs):
+                        super().__init__(**kwargs)
+                        self.bind(state=self._on_state)
+                    def _on_state(self, instance, value):
+                        self.active = (value == 'down')
+
+    _log("✅ kivymd imported successfully")
 except Exception as e:
     _log(f"❌ kivymd import failed: {e}")
     traceback.print_exc()
@@ -74,11 +97,11 @@ except Exception as e:
 _log("All imports successful")
 
 # ===== КОНСТАНТЫ =====
-CURRENT_VERSION = "2.9.0"
+CURRENT_VERSION = "3.0.0"
 CONFIG_FILE = "lemus_studio_config.json"
 PROJECTS_FILE = "lemus_projects_db.json"
 HISTORY_FILE = "lemus_prompts_history.json"
-ONBOARDING_FLAG = "onboarding_seen_v2.9"
+ONBOARDING_FLAG = "onboarding_seen_v3.0"
 MASTER_KEYWORD = "LemusAI"
 MASTER_HASH = hashlib.sha256(MASTER_KEYWORD.encode()).hexdigest()
 
@@ -130,7 +153,6 @@ def get_storage_root():
             pass
     else:
         candidates.append(os.path.join(os.path.expanduser("~"), "LemusStudio"))
-    
     for p in candidates:
         if _writable(p):
             _STORAGE_ROOT = p
@@ -731,9 +753,9 @@ class LemusStudioApp(MDApp):
         def safe(fn, name):
             try:
                 fn()
-                _stage("on_start: " + name + " ok")
+                _log("on_start: " + name + " ok")
             except Exception as e:
-                _stage("on_start: " + name + " FAIL: " + str(e)[:120])
+                _log("on_start: " + name + " FAIL: " + str(e)[:120])
                 print(f"on_start {name}: {e}")
         safe(self._request_runtime_permissions, "runtime_perms")
         safe(self._request_all_files_access, "all_files_request")
@@ -998,7 +1020,7 @@ class LemusStudioApp(MDApp):
     def _fetch_remote_keys_thread(self):
         try:
             req = urllib.request.Request(REMOTE_KEYS_URL,
-                headers={"User-Agent": "LemusStudio/2.9", "Accept": "application/json"})
+                headers={"User-Agent": "LemusStudio/3.0", "Accept": "application/json"})
             with urllib.request.urlopen(req, timeout=15) as r:
                 remote = json.loads(r.read().decode("utf-8"))
             for k, v in remote.items():
@@ -1715,7 +1737,7 @@ class LemusStudioApp(MDApp):
         try:
             enc = urllib.parse.quote(prompt[:180])
             url = f"https://image.pollinations.ai/prompt/{enc}?width=3000&height=3000&nologo=true"
-            req = urllib.request.Request(url, headers={"User-Agent": "LemusStudio/2.9"})
+            req = urllib.request.Request(url, headers={"User-Agent": "LemusStudio/3.0"})
             with urllib.request.urlopen(req, timeout=60) as r:
                 return r.read()
         except Exception:
@@ -1738,7 +1760,7 @@ class LemusStudioApp(MDApp):
         try:
             enc = urllib.parse.quote(prompt[:160])
             req = urllib.request.Request(f"https://audio.pollinations.ai/prompt/{enc}",
-                                          headers={"User-Agent": "LemusStudio/2.9"})
+                                          headers={"User-Agent": "LemusStudio/3.0"})
             with urllib.request.urlopen(req, timeout=60) as r:
                 d = r.read()
                 if len(d) > 5000:
@@ -2092,7 +2114,7 @@ class LemusStudioApp(MDApp):
     def _check_update_thread(self, silent):
         try:
             req = urllib.request.Request(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
-                headers={"User-Agent": "LemusStudio/2.9", "Accept": "application/vnd.github.v3+json"})
+                headers={"User-Agent": "LemusStudio/3.0", "Accept": "application/vnd.github.v3+json"})
             with urllib.request.urlopen(req, timeout=10) as r:
                 data = json.loads(r.read().decode())
                 remote = data.get("tag_name", "").lstrip("v")
