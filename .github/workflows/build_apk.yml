@@ -46,6 +46,9 @@ jobs:
         run: python -m py_compile main.py
 
       - name: Build APK (auto-accept licenses)
+        env:
+          P4A_PYTHON3_VERSION: "3.11.9"
+          P4A_HOSTPYTHON3_VERSION: "3.11.9"
         run: yes | buildozer android debug
 
       - name: VERIFY whole APK for host-tagged binaries
@@ -66,7 +69,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LemusStudio-v2.9.0-FINAL
+          name: LemusStudio-v3.0.0-FINAL
           path: bin/*.apk
 
       - name: Create Release
