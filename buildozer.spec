@@ -4,10 +4,9 @@ package.name = lemusaimusicstudio
 package.domain = org.lemus.music
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json
-version = 2.6.7
+version = 2.7.0
 
-# КРИТИЧНО: python3 и hostpython3 одной версии, pyjnius явно
-requirements = python3==3.11.9,hostpython3==3.11.9,kivy==2.3.0,kivymd==1.2.0,pillow,mutagen,pyjnius
+requirements = python3==3.11.9,hostpython3==3.11.9,kivy==2.3.0,kivymd==1.2.0,mutagen,pyjnius
 
 orientation = portrait
 fullscreen = 0
@@ -18,9 +17,6 @@ android.minapi = 21
 android.ndk = 25b
 android.archs = arm64-v8a
 android.allow_backup = True
-
-# Принудительно чистим старые артефакты перед сборкой
-android.clean_assets = True
 
 [buildozer]
 log_level = 2
