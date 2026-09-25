@@ -4,9 +4,10 @@ package.name = lemusaimusicstudio
 package.domain = org.lemus.music
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json
-version = 2.6.5
+version = 2.6.6
 
-requirements = python3==3.11.9,kivy==2.3.0,kivymd==1.2.0,pillow,mutagen
+# Явные стабильные версии + pyjnius для Android-интеграции
+requirements = python3==3.10.14,kivy==2.3.0,kivymd==1.2.0,pillow,mutagen,pyjnius
 
 orientation = portrait
 fullscreen = 0
@@ -17,8 +18,6 @@ android.minapi = 21
 android.ndk = 25b
 android.archs = arm64-v8a
 android.allow_backup = True
-
-p4a.branch = release-2024.01.21
 
 [buildozer]
 log_level = 2
