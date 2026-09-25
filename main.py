@@ -2,31 +2,62 @@ import os, sys, io, json, threading, hashlib, base64, math, time, struct, wave, 
 import traceback
 import urllib.request, urllib.parse, urllib.error
 
-# ===== ЧЁРНЫЙ ЯЩИК: пишет причину падения в Music/LemusStudio/crash.log =====
-def _crash_path():
+# ===== ЧЁРНЫЙ ЯЩИК + ХЛЕБНЫЕ КРОШКИ =====
+def _private_dir():
     try:
-        from android.storage import primary_external_storage_path
-        base = primary_external_storage_path()
-    except Exception:
-        base = os.path.expanduser("~")
-    p = os.path.join(base, "Music", "LemusStudio")
-    try:
-        os.makedirs(p, exist_ok=True)
-    except Exception:
-        p = "."
-    return os.path.join(p, "crash.log")
-
-def _crash_hook(t, v, tb):
-    try:
-        with open(_crash_path(), "a", encoding="utf-8") as f:
-            f.write("\n=== CRASH " + time.strftime("%Y-%m-%d %H:%M:%S") + " ===\n")
-            f.write("".join(traceback.format_exception(t, v, tb)))
+        from jnius import autoclass
+        PythonActivity = autoclass("org.kivy.android.PythonActivity")
+        d = PythonActivity.mActivity.getExternalFilesDir(None)
+        if d:
+            p = os.path.join(d.getAbsolutePath(), "LemusStudio")
+            os.makedirs(p, exist_ok=True)
+            return p
     except Exception:
         pass
+    p = os.path.join(os.path.expanduser("~"), "LemusStudio")
+    try: os.makedirs(p, exist_ok=True)
+    except Exception: pass
+    return p
+
+def _toast(msg):
+    try:
+        from jnius import autoclass
+        Toast = autoclass("android.widget.Toast")
+        PythonActivity = autoclass("org.kivy.android.PythonActivity")
+        Toast.makeText(PythonActivity.mActivity, str(msg), Toast.LENGTH_LONG).show()
+    except Exception:
+        pass
+
+def _crash_paths():
+    return [
+        os.path.join(_private_dir(), "crash.log"),
+        os.path.join(".", "crash.log"),
+    ]
+
+def _crash_hook(t, v, tb):
+    text = "".join(traceback.format_exception(t, v, tb))
+    for p in _crash_paths():
+        try:
+            with open(p, "a", encoding="utf-8") as f:
+                f.write("\n=== CRASH " + time.strftime("%Y-%m-%d %H:%M:%S") + " ===\n")
+                f.write(text)
+        except Exception:
+            pass
+    _toast("CRASH: " + str(v)[:140])
     sys.__excepthook__(t, v, tb)
 
 sys.excepthook = _crash_hook
-# ============================================================================
+
+def _stage(msg):
+    try:
+        with open(os.path.join(_private_dir(), "startup.log"), "a", encoding="utf-8") as f:
+            f.write(time.strftime("%H:%M:%S") + " " + str(msg) + "\n")
+    except Exception:
+        pass
+
+_stage("=== NEW LAUNCH ===")
+_stage("imports: top-level ok")
+# =========================================
 
 from kivy.lang import Builder
 from kivy.utils import platform
@@ -51,7 +82,9 @@ from kivymd.uix.list import (MDList, TwoLineAvatarIconListItem, IconLeftWidget,
                              IconRightWidget, CheckboxLeftWidget)
 from kivymd.toast import toast
 
-CURRENT_VERSION = "2.6.3"
+_stage("imports: kivy/kivymd ok")
+
+CURRENT_VERSION = "2.6.5"
 CONFIG_FILE = "lemus_studio_config.json"
 PROJECTS_FILE = "lemus_projects_db.json"
 HISTORY_FILE = "lemus_prompts_history.json"
@@ -75,6 +108,37 @@ EMPTY_CONFIG = {
     "disclose_ai": True,
 }
 
+# ===== УМНОЕ ХРАНИЛИЩЕ =====
+_STORAGE_ROOT = None
+
+def _writable(p):
+    try:
+        os.makedirs(p, exist_ok=True)
+        t = os.path.join(p, ".writetest")
+        with open(t, "w") as f:
+            f.write("1")
+        os.remove(t)
+        return True
+    except Exception:
+        return False
+
+def get_storage_root():
+    global _STORAGE_ROOT
+    if _STORAGE_ROOT:
+        return _STORAGE_ROOT
+    candidates = []
+    if platform == "android":
+        candidates.append("/storage/emulated/0/Music/LemusStudio")
+        candidates.append(_private_dir())
+    else:
+        candidates.append(os.path.join(os.path.expanduser("~"), "LemusStudio"))
+    for p in candidates:
+        if _writable(p):
+            _STORAGE_ROOT = p
+            return p
+    _STORAGE_ROOT = candidates[-1]
+    return _STORAGE_ROOT
+
 ONBOARD_CARDS = [
     {"icon": "🎛", "title": "AI Music Studio",
      "body": "Автономная продюсерская станция.\n\n• 🎵 Сингл\n• 🔥 Вирусный хит\n• 💿 EP + досоздание треков\n• ✍️ По промпту\n• 💎 Доход со стримингов"},
@@ -89,7 +153,7 @@ ONBOARD_CARDS = [
     {"icon": "⚖️", "title": "Право и маркировка AI",
      "body": "AI-треки МОЖНО в Яндекс Музыку.\n\n• Ты правообладатель\n• Менять куски руками НЕ нужно\n• Маркировка AI — твой выбор\n• ЗАПРЕЩЕНО: чужие голоса/семплы"},
     {"icon": "💾", "title": "Данные и обновления",
-     "body": "• Проекты и БД в Music/LemusStudio\n• Переживают переустановку\n• OTA-обновления поверх — данные целы\n• Удаление: подтверждение + мультивыбор"},
+     "body": "• Проекты и БД переживают переустановку\n• OTA-обновления поверх — данные целы\n• Удаление: подтверждение + мультивыбор\n• При первом запуске разреши «Все файлы»"},
 ]
 
 MONETIZE_CARDS = [
@@ -519,6 +583,12 @@ MDBoxLayout:
                             md_bg_color: 0.9, 0.2, 0.2, 1
                             on_release: app.backup_to_yandex()
 
+                    MDRaisedButton:
+                        text: "📋 Показать логи"
+                        size_hint_x: 1
+                        md_bg_color: 0.5, 0.3, 0.1, 1
+                        on_release: app.show_crash_log()
+
                     MDSeparator:
                         height: "2dp"
 
@@ -614,6 +684,7 @@ MDBoxLayout:
 
 class LemusStudioApp(MDApp):
     def build(self):
+        _stage("build: enter")
         self.theme_cls.theme_style = "Dark"
         self.theme_cls.primary_palette = "DeepPurple"
         self.theme_cls.accent_palette = "Orange"
@@ -639,33 +710,81 @@ class LemusStudioApp(MDApp):
         self.file_manager = MDFileManager(
             exit_manager=self.exit_file_manager,
             select_path=self.on_file_selected,
-            preview=False,
         )
+        _stage("build: filemanager ok")
 
         self.load_config()
         self.load_projects()
         self.load_history()
+        _stage("build: data loaded, root=" + get_storage_root())
         return Builder.load_string(KV)
 
     def on_start(self):
-        self.populate_settings_fields()
-        self.refresh_projects_ui()
-        self.root.ids.version_label.text = f"v{CURRENT_VERSION}"
-        self.root.ids.ai_disclose_switch.active = bool(self.config.get("disclose_ai", True))
-        self.update_activation_status()
-        self.check_for_updates(silent=True)
-        if not os.path.exists(os.path.join(self.get_data_path(), ONBOARDING_FLAG)):
-            Clock.schedule_once(lambda dt: self.show_onboarding(), 0.5)
+        _stage("on_start: enter")
+        def safe(fn, name):
+            try:
+                fn()
+                _stage("on_start: " + name + " ok")
+            except Exception as e:
+                _stage("on_start: " + name + " FAIL: " + str(e)[:120])
+                print(f"on_start {name}: {e}")
+        safe(self.populate_settings_fields, "settings_fields")
+        safe(self.refresh_projects_ui, "projects_ui")
+        safe(lambda: setattr(self.root.ids.version_label, "text",
+             f"v{CURRENT_VERSION} | {os.path.basename(get_storage_root())}"), "version_label")
+        safe(lambda: setattr(self.root.ids.ai_disclose_switch, "active",
+             bool(self.config.get("disclose_ai", True))), "ai_switch")
+        safe(self.update_activation_status, "activation_status")
+        safe(self._request_all_files_access, "all_files_request")
+        safe(lambda: self.check_for_updates(silent=True), "updates")
+        def _onb():
+            if not os.path.exists(os.path.join(self.get_data_path(), ONBOARDING_FLAG)):
+                self.show_onboarding()
+        safe(_onb, "onboarding")
+        _stage("on_start: done")
+
+    def _request_all_files_access(self):
+        if platform != "android":
+            return
+        try:
+            from jnius import autoclass
+            Environment = autoclass("android.os.Environment")
+            if Environment.isExternalStorageManager():
+                return
+            Intent = autoclass("android.content.Intent")
+            Settings = autoclass("android.provider.Settings")
+            Uri = autoclass("android.net.Uri")
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+            intent.setData(Uri.parse("package:" + PythonActivity.mActivity.getPackageName()))
+            PythonActivity.mActivity.startActivity(intent)
+            toast("🔐 Разреши «Все файлы» — треки будут в Music/LemusStudio")
+        except Exception as e:
+            print(f"All-files request: {e}")
+
+    def show_crash_log(self):
+        parts = []
+        for name in ["startup.log", "crash.log"]:
+            for base in [_private_dir(), "."]:
+                p = os.path.join(base, name)
+                if os.path.exists(p):
+                    try:
+                        with open(p, "r", encoding="utf-8") as f:
+                            parts.append(f"--- {name} ---\n" + f.read()[-1200:])
+                    except Exception:
+                        pass
+                    break
+        if not parts:
+            toast("Логи пусты — приложение не падало 🎉")
+            return
+        text = "\n\n".join(parts)[:2500]
+        d = MDDialog(title="📋 Логи запуска и падений", text=text,
+            buttons=[MDRaisedButton(text="OK", on_release=lambda i: d.dismiss())])
+        d.open()
 
     # ===== ХРАНИЛИЩЕ =====
     def get_storage_path(self):
-        if platform == "android":
-            from android.storage import primary_external_storage_path
-            path = os.path.join(primary_external_storage_path(), "Music", "LemusStudio")
-        else:
-            path = os.path.join(os.path.expanduser("~"), "LemusStudio")
-        os.makedirs(path, exist_ok=True)
-        return path
+        return get_storage_root()
 
     def get_data_path(self):
         path = os.path.join(self.get_storage_path(), ".data")
@@ -673,12 +792,14 @@ class LemusStudioApp(MDApp):
         return path
 
     def _migrate_old_data(self):
-        for fname in [CONFIG_FILE, PROJECTS_FILE, HISTORY_FILE, ONBOARDING_FLAG]:
-            old = os.path.join(self.user_data_dir, fname)
-            new = os.path.join(self.get_data_path(), fname)
-            if os.path.exists(old) and not os.path.exists(new):
-                try: shutil.copy2(old, new)
-                except Exception: pass
+        sources = [self.user_data_dir, _private_dir()]
+        for src_dir in sources:
+            for fname in [CONFIG_FILE, PROJECTS_FILE, HISTORY_FILE, ONBOARDING_FLAG]:
+                for cand in [os.path.join(src_dir, fname), os.path.join(src_dir, ".data", fname)]:
+                    new = os.path.join(self.get_data_path(), fname)
+                    if os.path.exists(cand) and cand != new and not os.path.exists(new):
+                        try: shutil.copy2(cand, new)
+                        except Exception: pass
 
     # ===== ПЛЕЕР =====
     def play_item(self, item):
@@ -782,7 +903,6 @@ class LemusStudioApp(MDApp):
             self.update_activation_status()
             n = len(self.config.get("gemini_keys", []))
             toast(f"👑 Ключи загружены! ({n} Gemini)")
-            self._send_notification("Lemus AI Studio", f"Ключи из JSON активированы ({n} Gemini)")
         except json.JSONDecodeError:
             toast("❌ Ошибка парсинга JSON")
         except Exception as e:
@@ -893,13 +1013,7 @@ class LemusStudioApp(MDApp):
                 lines.append("• HuggingFace: 🔴")
         lines.append(f"• Fish.audio: {'🟢' if self.config.get('fish_key') else '🔴'}")
         lines.append(f"• Groq: {'🟢' if self.config.get('groq_key') else '🔴'}")
-        lines.append(f"• ffmpeg: {'🟢' if shutil.which('ffmpeg') else '🟡 нет (FLAC/m4a недоступны)'}")
-        try:
-            req = urllib.request.Request("https://image.pollinations.ai/prompt/cat?width=64&height=64")
-            with urllib.request.urlopen(req, timeout=8) as r:
-                lines.append("• Pollinations: 🟢" if r.status == 200 else "• Pollinations: 🔴")
-        except Exception:
-            lines.append("• Pollinations: 🔴")
+        lines.append(f"• Хранилище: {get_storage_root()}")
         Clock.schedule_once(lambda dt: self._show_diag_dialog("\n".join(lines)), 0)
 
     def _show_diag_dialog(self, text):
@@ -1036,8 +1150,11 @@ class LemusStudioApp(MDApp):
         self.history = []
 
     def save_history(self):
-        with open(os.path.join(self.get_data_path(), HISTORY_FILE), "w", encoding="utf-8") as f:
-            json.dump(self.history[-20:], f, ensure_ascii=False, indent=2)
+        try:
+            with open(os.path.join(self.get_data_path(), HISTORY_FILE), "w", encoding="utf-8") as f:
+                json.dump(self.history[-20:], f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
 
     def add_to_history(self, ptype, text):
         self.history.append({"type": ptype, "prompt": text[:200], "date": time.strftime("%Y-%m-%d %H:%M")})
@@ -1079,8 +1196,11 @@ class LemusStudioApp(MDApp):
         self.config = EMPTY_CONFIG.copy()
 
     def save_config_to_disk(self):
-        with open(os.path.join(self.get_data_path(), CONFIG_FILE), "w", encoding="utf-8") as f:
-            json.dump(self.config, f, ensure_ascii=False, indent=2)
+        try:
+            with open(os.path.join(self.get_data_path(), CONFIG_FILE), "w", encoding="utf-8") as f:
+                json.dump(self.config, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            toast(f"❌ Конфиг: {str(e)[:40]}")
 
     def save_user_settings(self):
         r = self.root
@@ -1679,8 +1799,11 @@ class LemusStudioApp(MDApp):
         self.projects = []
 
     def save_projects(self):
-        with open(os.path.join(self.get_data_path(), PROJECTS_FILE), "w", encoding="utf-8") as f:
-            json.dump(self.projects, f, ensure_ascii=False, indent=2)
+        try:
+            with open(os.path.join(self.get_data_path(), PROJECTS_FILE), "w", encoding="utf-8") as f:
+                json.dump(self.projects, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            toast(f"❌ БД: {str(e)[:40]}")
 
     def toggle_selection_mode(self):
         self.selection_mode = not self.selection_mode
@@ -1965,4 +2088,8 @@ class LemusStudioApp(MDApp):
 
 
 if __name__ == "__main__":
-    LemusStudioApp().run()
+    try:
+        LemusStudioApp().run()
+    except Exception as e:
+        traceback.print_exc()
+        _crash_hook(type(e), e, e.__traceback__)
