@@ -11,7 +11,7 @@ def _log(msg):
     except Exception:
         pass
 
-_log("=== STARTUP v6.7.0 ===")
+_log("=== STARTUP v7.0.0 ===")
 
 try:
     import certifi, ssl
@@ -91,33 +91,22 @@ except Exception as e:
     _log(f"FAIL kivymd: {e}")
     raise
 
-CURRENT_VERSION = "6.7.0"
+CURRENT_VERSION = "7.0.0"
 CONFIG_FILE = "lemus_studio_config.json"
 PROJECTS_FILE = "lemus_projects_db.json"
 HISTORY_FILE = "lemus_prompts_history.json"
-ONBOARDING_FLAG = "onboarding_seen_v6"
+ONBOARDING_FLAG = "onboarding_seen_v7"
 MASTER_KEYWORD = "LemusAI"
 MASTER_HASH = hashlib.sha256(MASTER_KEYWORD.encode()).hexdigest()
 GITHUB_REPO = "antonlemus/lemus-ai-music-apk"
 REMOTE_KEYS_URL = "https://gist.githubusercontent.com/antonlemus/YOUR_GIST_ID/raw/keys.json"
 
-# ⭐ АКТУАЛЬНЫЕ МОДЕЛИ GEMINI (без gemini-2.5-flash — он отключён для новых пользователей)
 GEMINI_MODELS = [
-    "gemini-2.0-flash",
-    "gemini-1.5-flash-latest",
-    "gemini-1.5-pro-latest",
-    "gemini-2.0-flash-exp",
-    "gemini-exp-1206",
-    "gemini-pro-latest",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
+    "gemini-2.0-flash", "gemini-flash-latest", "gemini-2.0-flash-exp",
+    "gemini-2.5-pro", "gemini-1.5-flash-latest", "gemini-1.5-pro-latest",
 ]
-OR_MODELS = [
-    "qwen/qwen3.8-27b:free",
-    "openrouter/auto",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "deepseek/deepseek-chat:free",
-]
+OR_MODELS = ["qwen/qwen3.8-27b:free", "openrouter/auto",
+             "meta-llama/llama-3.3-70b-instruct:free", "deepseek/deepseek-chat:free"]
 
 REPLICATE_MUSIC_MODELS = [
     {"owner_model": "meta/musicgen",
@@ -140,13 +129,13 @@ EMPTY_CONFIG = {
 }
 
 HINTS = {
-    "tab_studio": "Студия: выбери режим чипсами сверху. Кнопка «Улучшить промпт» допишет идею до профессионального описания.",
+    "tab_studio": "Студия: выбери режим чипсами сверху. «Улучшить промпт» допишет идею до профессионального описания.",
     "tab_projects": "Медиатека: слушай, скачивай, отправляй и экспортируй готовые треки.",
-    "tab_settings": "Настройки: ключи и Replicate-токен дают студийный звук. Диагностика покажет точные коды ошибок.",
+    "tab_settings": "Настройки: загрузи keys.json для полной мощности. Диагностика покажет точные коды ошибок.",
     "mode_single": "Сингл: тема + жанр + длительность. Демоголос включает клон твоего голоса.",
     "mode_prompt": "Промпт: опиши трек словами или нажми «Улучшить промпт» — студия добавит жанр, BPM, настроение и структуру.",
     "mode_viral": "Хит: мемная фраза станет припевом короткого трека для Reels/TikTok.",
-    "mode_album": "Альбом: концепция + жанр → 3-4 трека в едином стиле. Позже добавляй треки.",
+    "mode_album": "Альбом: концепция + жанр → 3-4 трека в едином стиле. Позже добавляй треки кнопкой «Трек в альбом».",
     "mode_money": "Фон: ниша для стримингов → монетизируемый фоновый трек.",
 }
 
@@ -154,7 +143,7 @@ TYPO_MAP = [
     ("drumm and base", "drum and bass"), ("drum and base", "drum and bass"),
     ("drumm-n-base", "drum and bass"), ("драм-н-бэйс", "drum and bass"),
     ("drum'n'bass", "drum and bass"), ("медодичный", "мелодичный"),
-    ("мелодичный", "мелодичный"), ("лоу-фай", "lo-fi"), ("лоуфай", "lo-fi"),
+    ("лоу-фай", "lo-fi"), ("лоуфай", "lo-fi"),
     ("фонк", "phonk"), ("хаус", "house"), ("техно", "techno"),
 ]
 GENRE_BPM = [
@@ -177,12 +166,11 @@ def _local_enhance(raw):
         if any(k in t for k in keys):
             bpm, genre, instr = b_, g_, i_
             break
+    vocals = ""
     if any(w in t for w in ("female", "женск")):
         vocals = "женский вокал"
     elif any(w in t for w in ("male", "мужск")):
         vocals = "мужской вокал"
-    else:
-        vocals = ""
     if any(w in t for w in ("мягк", "soft", "груст", "sad", "лирич", "нежн")):
         mood = "настроение светлой грусти"
     elif any(w in t for w in ("энергич", "агрессив", "драйв", "energy")):
@@ -244,12 +232,15 @@ def get_storage_root():
     _STORAGE_ROOT = "."
     return _STORAGE_ROOT
 
+# =====================================================================
+# МУЗЫКАЛЬНЫЙ СИНТЕЗАТОР v2 — АРАНЖИРОВКА ВМЕСТО ПИСКА
+# =====================================================================
 NOTE_SEMI = {"C": 0, "C#": 1, "Db": 1, "D": 2, "D#": 3, "Eb": 3, "E": 4, "F": 5,
              "F#": 6, "Gb": 6, "G": 7, "G#": 8, "Ab": 8, "A": 9, "A#": 10, "Bb": 10, "B": 11}
 SCALE_MINOR = [0, 2, 3, 5, 7, 8, 10]
 SCALE_MAJOR = [0, 2, 4, 5, 7, 9, 11]
-PROG_MINOR = [0, 5, 2, 6]
-PROG_MAJOR = [0, 5, 3, 4]
+PROG_MINOR = [0, 5, 2, 6]   # i - VI - III - VII
+PROG_MAJOR = [0, 5, 3, 4]   # I - vi - IV - V
 
 def _parse_key(key_str):
     s = (key_str or "").strip()
@@ -278,7 +269,12 @@ def _section_energy(name):
     if "outro" in n or "финал" in n or "концов" in n: return 0.35
     return 0.60
 
-def _procedural_track(duration, seed_text, plan=None):
+def _synth_arrangement(duration, seed_text, plan=None):
+    """
+    Многослойная аранжировка: detuned-пэды, суб-бас с ADSR,
+    бочка/снейр/хэты, мелодия с вибрато, фильтр, реверб, лимитер.
+    НИКОГДА не возвращает один голый синус.
+    """
     import random
     plan = plan or {}
     rnd = random.Random(int(hashlib.md5((seed_text or "lemus").encode()).hexdigest()[:8], 16))
@@ -304,24 +300,40 @@ def _procedural_track(duration, seed_text, plan=None):
             e = float(e) if e is not None else _section_energy(sec.get("name"))
             bar_plan += [(sec.get("name", ""), e)] * bars
     while len(bar_plan) * bar < n + bar:
-        bar_plan += [("Verse", 0.6), ("Verse", 0.6), ("Chorus", 0.95), ("Chorus", 0.95)]
+        bar_plan += [("Intro", 0.3), ("Verse", 0.6), ("Chorus", 0.95), ("Bridge", 0.45)]
     bars_total = int(n / bar) + 1
 
-    def add_tone(start, length, freq, amp, decay, harm, vib=0.0):
+    # --- Detuned pad (два осциллятора ±5 центов = хорус-ширина) ---
+    def add_pad(start, length, freq, amp):
         i0 = int(start)
-        if i0 >= n:
-            return
+        if i0 >= n: return
+        ln = min(int(length), n - i0)
+        w1 = 2 * math.pi * freq / sr
+        w2 = 2 * math.pi * (freq * 1.005) / sr   # +5 cents
+        atk = min(int(0.08 * sr), max(1, ln // 5))
+        rel = min(int(0.15 * sr), max(1, ln // 4))
+        for i in range(ln):
+            env = 1.0
+            if i < atk: env = i / atk
+            elif i > ln - rel: env = (ln - i) / rel
+            v = math.sin(w1 * i) + math.sin(w2 * i)
+            buf[i0 + i] += amp * env * v * 0.5
+
+    # --- Суб-бас с быстрым атаком ---
+    def add_bass(start, length, freq, amp):
+        i0 = int(start)
+        if i0 >= n: return
         ln = min(int(length), n - i0)
         w = 2 * math.pi * freq / sr
-        atk = min(int(0.02 * sr), max(1, ln // 4))
+        atk = min(int(0.01 * sr), max(1, ln // 8))
         for i in range(ln):
             t = i / sr
-            env = (i / atk) if i < atk else 1.0
-            env *= decay ** (t * 3.0)
-            fm = 1.0 + (0.006 * vib * math.sin(2 * math.pi * 5.2 * t) if vib else 0.0)
-            buf[i0 + i] += amp * env * (math.sin(w * fm * i) + harm * 0.5 * math.sin(2 * w * fm * i))
+            env = (i / atk) if i < atk else 0.92 ** (t * 2.0)
+            v = math.sin(w * i) + 0.4 * math.sin(2 * w * i) + 0.15 * math.sin(3 * w * i)
+            buf[i0 + i] += amp * env * v
 
-    def add_kick(start, amp=0.52):
+    # --- Бочка: pitch-drop 120→42 Гц ---
+    def add_kick(start, amp=0.5):
         i0 = int(start)
         if i0 >= n: return
         ln = min(int(0.14 * sr), n - i0)
@@ -330,7 +342,8 @@ def _procedural_track(duration, seed_text, plan=None):
             f = 120 * math.exp(-t * 16) + 42
             buf[i0 + i] += amp * math.exp(-t * 20) * math.sin(2 * math.pi * f * t)
 
-    def add_snare(start, amp=0.26):
+    # --- Снейр: шум + тон 190 Гц ---
+    def add_snare(start, amp=0.25):
         i0 = int(start)
         if i0 >= n: return
         ln = min(int(0.16 * sr), n - i0)
@@ -339,7 +352,8 @@ def _procedural_track(duration, seed_text, plan=None):
             noise = rnd.random() * 2 - 1
             buf[i0 + i] += amp * math.exp(-t * 26) * (0.7 * noise + 0.3 * math.sin(2 * math.pi * 190 * t))
 
-    def add_hat(start, amp=0.09):
+    # --- Хэт: high-pass белый шум ---
+    def add_hat(start, amp=0.08):
         i0 = int(start)
         if i0 >= n: return
         ln = min(int(0.05 * sr), n - i0)
@@ -351,16 +365,32 @@ def _procedural_track(duration, seed_text, plan=None):
             prev = noise
             buf[i0 + i] += amp * math.exp(-t * 70) * hp
 
+    # --- Мелодия: синус + гармоника + вибрато 5.2 Гц ---
+    def add_lead(start, length, freq, amp, vib=1.0):
+        i0 = int(start)
+        if i0 >= n: return
+        ln = min(int(length), n - i0)
+        w = 2 * math.pi * freq / sr
+        atk = min(int(0.02 * sr), max(1, ln // 4))
+        for i in range(ln):
+            t = i / sr
+            env = (i / atk) if i < atk else 0.985 ** (t * 3.0)
+            fm = 1.0 + 0.006 * vib * math.sin(2 * math.pi * 5.2 * t)
+            buf[i0 + i] += amp * env * (math.sin(w * fm * i) + 0.5 * math.sin(2 * w * fm * i))
+
     motif = [(rnd.choice(mel_scale), rnd.choice([0.5, 0.5, 1.0])) for _ in range(8)]
     for b in range(bars_total):
         name, energy = bar_plan[b % len(bar_plan)] if bar_plan else ("Verse", 0.6)
         ch = chords[b % 4]
         s0 = b * bar
-        pad_amp = 0.07 + 0.05 * energy
+        # Пэды всегда (тише в интро/аутро)
+        pad_amp = 0.06 + 0.05 * energy
         for f in ch:
-            add_tone(s0, bar, f, pad_amp, 0.995, 0.25)
+            add_pad(s0, bar, f, pad_amp)
+        # Бас начиная со средней энергии
         if energy > 0.4:
-            add_tone(s0, bar * 0.98, ch[0] / 2.0, 0.10 + 0.08 * energy, 0.99, 0.08)
+            add_bass(s0, bar * 0.98, ch[0] / 2.0, 0.10 + 0.08 * energy)
+        # Ударные по секциям
         if energy > 0.55:
             kicks = 4 if energy > 0.8 else 2
             for k in range(kicks):
@@ -370,43 +400,45 @@ def _procedural_track(duration, seed_text, plan=None):
                 add_snare(s0 + 3 * beat)
             for k in range(8 if energy > 0.8 else 4):
                 add_hat(s0 + k * beat / 2, 0.05 + 0.05 * energy)
+        # Мелодия в припеве, полутоновая вариация в куплете
         if energy > 0.8:
-            for k, (f, ln) in enumerate(motif):
-                add_tone(s0 + k * beat / 2, beat / 2 * ln * 1.8, f, 0.10, 0.985, 0.5, vib=1)
+            for k, (f, ln_) in enumerate(motif):
+                add_lead(s0 + k * beat / 2, beat / 2 * ln_ * 1.8, f, 0.10, vib=1)
         elif 0.45 < energy <= 0.8 and b % 2 == 0:
             for k in (0, 3, 5):
-                f, ln = motif[k]
-                add_tone(s0 + k * beat / 2, beat / 2 * ln * 1.5, f / 2.0, 0.07, 0.985, 0.4, vib=1)
+                f, ln_ = motif[k]
+                add_lead(s0 + k * beat / 2, beat / 2 * ln_ * 1.5, f / 2.0, 0.07, vib=1)
+
+    # ===== МАСТЕРИНГ =====
     mean = sum(buf) / max(1, n)
     for i in range(n):
-        buf[i] -= mean
-    hp = [0.0] * n
-    prevx = 0.0
+        buf[i] -= mean                      # DC-фильтр
+    dc = [0.0] * n
+    px = 0.0
     r = 0.985
-    for i in range(n):
-        hp[i] = buf[i] - prevx + r * hp[i - 1] if i > 0 else buf[i] - prevx
-        prevx = buf[i]
+    for i in range(n):                      # HPF 1-го порядка
+        dc[i] = buf[i] - px + r * dc[i - 1] if i > 0 else buf[i] - px
+        px = buf[i]
     env = 0.0
-    for i in range(n):
-        a = abs(hp[i])
+    for i in range(n):                      # Компрессор (soft knee)
+        a = abs(dc[i])
         env = max(a, env * 0.9995)
-        g = 1.0
-        if env > 0.6:
-            g = 0.6 / env
-        hp[i] *= (0.4 + 0.6 * g)
-    peak = max(0.0001, max(abs(v) for v in hp))
+        g = 0.6 / env if env > 0.6 else 1.0
+        dc[i] *= (0.4 + 0.6 * g)
+    peak = max(0.0001, max(abs(v) for v in dc))
     gain = 0.89 / peak
     fade = int(1.5 * sr)
     data = bytearray()
     for i in range(n):
-        v = math.tanh(hp[i] * gain * 1.05) * 0.9
-        if i < fade:
-            v *= i / fade
-        if i > n - fade:
-            v *= (n - i) / fade
+        v = math.tanh(dc[i] * gain * 1.05) * 0.9      # Soft-clip лимитер
+        if i < fade: v *= i / fade
+        if i > n - fade: v *= (n - i) / fade
         sL = int(max(-32000, min(32000, v * 32767)))
-        vr = hp[max(0, i - 8)] * gain
-        sR = int(max(-32000, min(32000, math.tanh(vr * 1.05) * 0.9 * 32767 * (1 if i >= fade and i <= n - fade else (i / fade if i < fade else (n - i) / fade)))))
+        vr = dc[max(0, i - 9)] * gain                  # Лёгкий стерео-реверб (delay 9 семплов)
+        rv = math.tanh(vr * 1.05) * 0.9
+        if i < fade: rv *= i / fade
+        if i > n - fade: rv *= (n - i) / fade
+        sR = int(max(-32000, min(32000, rv * 32767)))
         data += struct.pack("<hh", sL, sR)
     hdr = (b"RIFF" + struct.pack("<I", 36 + len(data)) + b"WAVEfmt " +
            struct.pack("<IHHIIHH", 16, 1, 2, sr, sr * 4, 4, 16) + b"data" + struct.pack("<I", len(data)))
@@ -952,12 +984,27 @@ MDScrollView:
         size_hint_y: None
         height: self.minimum_height
 
-        MDLabel:
-            text: "Создание сингла"
-            font_style: "H5"
-            bold: True
-            theme_text_color: "Custom"
-            text_color: 0.97, 0.96, 1, 1
+        MDCard:
+            orientation: "vertical"
+            padding: "14dp"
+            radius: [18, 18, 18, 18]
+            elevation: 6
+            size_hint_y: None
+            height: "92dp"
+            md_bg_color: 0.16, 0.13, 0.28, 1
+            MDLabel:
+                text: "LEMUS"
+                font_style: "H4"
+                bold: True
+                theme_text_color: "Custom"
+                text_color: 0.82, 0.68, 1, 1
+                halign: "center"
+            MDLabel:
+                text: "СТУДИЯ МУЗЫКИ С ИИ"
+                font_style: "Caption"
+                theme_text_color: "Custom"
+                text_color: 0.62, 0.58, 0.78, 1
+                halign: "center"
 
         MDCard:
             orientation: "vertical"
@@ -1077,13 +1124,6 @@ MDScrollView:
         spacing: "14dp"
         size_hint_y: None
         height: self.minimum_height
-
-        MDLabel:
-            text: "Трек по своему описанию"
-            font_style: "H5"
-            bold: True
-            theme_text_color: "Custom"
-            text_color: 0.97, 0.96, 1, 1
 
         MDCard:
             orientation: "vertical"
@@ -1213,13 +1253,6 @@ MDScrollView:
         size_hint_y: None
         height: self.minimum_height
 
-        MDLabel:
-            text: "Вирусный хит"
-            font_style: "H5"
-            bold: True
-            theme_text_color: "Custom"
-            text_color: 0.97, 0.96, 1, 1
-
         MDCard:
             orientation: "vertical"
             padding: "16dp"
@@ -1286,13 +1319,6 @@ MDScrollView:
         spacing: "14dp"
         size_hint_y: None
         height: self.minimum_height
-
-        MDLabel:
-            text: "EP-Альбом"
-            font_style: "H5"
-            bold: True
-            theme_text_color: "Custom"
-            text_color: 0.97, 0.96, 1, 1
 
         MDCard:
             orientation: "vertical"
@@ -1525,7 +1551,6 @@ class LemusStudioApp(MDApp):
 
     # ===== GEMINI: ДИНАМИЧЕСКИЙ СПИСОК МОДЕЛЕЙ ИЗ API =====
     def _gemini_list_models(self, key):
-        """Берёт список моделей прямо из API — самый надёжный способ!"""
         if key in self._gemini_cache:
             return self._gemini_cache[key], None
         last_code = None
@@ -1538,39 +1563,27 @@ class LemusStudioApp(MDApp):
             models = []
             for m in data.get("models", []):
                 name = m.get("name", "").replace("models/", "")
-                # Берём все Gemini модели (текстовые)
                 if not name.startswith("gemini"):
                     continue
-                # Исключаем не-текстовые
                 if any(x in name for x in ("embedding", "image", "tts", "audio", "vision", "live")):
                     continue
                 methods = m.get("supportedGenerationMethods", [])
                 if "generateContent" in methods:
                     models.append(name)
-            
-            # ⭐ ПРИОРИТЕТ: flash → pro → exp
             def sort_key(m):
                 if "2.0-flash" in m and "exp" not in m: return 0
-                if "2.0-flash-exp" in m: return 1
-                if "1.5-flash" in m: return 2
-                if "1.5-pro" in m: return 3
-                if "exp" in m: return 4
+                if "flash-latest" in m: return 1
+                if "2.0-flash-exp" in m: return 2
+                if "1.5-flash" in m: return 3
+                if "pro" in m: return 4
                 return 10
-            
             models.sort(key=sort_key)
             self._gemini_cache[key] = models
             return models, None
         except urllib.error.HTTPError as e:
             last_code = e.code
-            body = ""
-            try:
-                body = e.read().decode()[:200]
-            except Exception:
-                pass
-            print(f"Gemini list models: HTTP {e.code} {body}")
-        except Exception as e:
+        except Exception:
             last_code = last_code or 0
-            print(f"Gemini list models error: {e}")
         return None, last_code
 
     def _gemini_post(self, prompt, key, model, mime_json=True):
@@ -1589,27 +1602,21 @@ class LemusStudioApp(MDApp):
         return res["candidates"][0]["content"]["parts"][0]["text"]
 
     def _call_gemini_native(self, prompt, api_key, model=None):
-        # ⭐ ГЛАВНОЕ: берём список моделей из API
         api_models, code = self._gemini_list_models(api_key)
-        
         if code in (401, 403, 400):
             self._mark_key(api_key, "dead")
             raise RuntimeError(f"Gemini dead: {code}")
         if code in (429, 503):
             self._mark_key(api_key, "temp")
             raise RuntimeError(f"Gemini temp: {code}")
-        
-        # Формируем список моделей: API + фолбэк
         models_to_try = []
         if model:
             models_to_try.append(model)
         if api_models:
             models_to_try.extend(api_models[:8])
-        # Фолбэк на статический список
         for m in GEMINI_MODELS:
             if m not in models_to_try:
                 models_to_try.append(m)
-        
         last_err = None
         for m in models_to_try[:10]:
             try:
@@ -1618,9 +1625,7 @@ class LemusStudioApp(MDApp):
                 return self._clean_json(text)
             except urllib.error.HTTPError as e:
                 last_err = e
-                # 404 = модель недоступна, пробуем следующую
                 if e.code == 404:
-                    print(f"Gemini: модель {m} недоступна (404), пробуем следующую")
                     continue
                 if e.code in (401, 403):
                     self._mark_key(api_key, "dead")
@@ -1637,36 +1642,29 @@ class LemusStudioApp(MDApp):
                 break
         if last_err:
             raise last_err
-        raise RuntimeError("Gemini: все модели недоступны")
+        raise RuntimeError("Gemini: модели недоступны")
 
     def _call_llm_text(self, prompt):
         g_keys = self.config.get("gemini_keys", [])
         if not g_keys and self.config.get("gemini_key"):
             g_keys = [self.config.get("gemini_key")]
-        
         for key in g_keys:
             if not key or self._key_skippable(key):
                 continue
-            api_models, code = self._gemini_list_models(key)
+            models, code = self._gemini_list_models(key)
             if code in (401, 403, 400):
                 self._mark_key(key, "dead")
                 continue
             if code in (429, 503):
                 self._mark_key(key, "temp")
                 continue
-            
-            cand = []
-            if api_models:
-                cand = api_models[:5]
-            else:
-                cand = GEMINI_MODELS[:5]
-            
+            cand = (models or [])[:5] or GEMINI_MODELS[:5]
             for m in cand:
                 try:
                     return self._gemini_post(prompt, key, m, mime_json=False)
                 except urllib.error.HTTPError as e:
                     if e.code == 404:
-                        continue  # модель недоступна, пробуем следующую
+                        continue
                     if e.code in (401, 403):
                         self._mark_key(key, "dead")
                         break
@@ -1679,8 +1677,6 @@ class LemusStudioApp(MDApp):
                     break
                 except Exception:
                     break
-        
-        # Фолбэк на OpenRouter
         or_key = self.config.get("openrouter_key", "").strip()
         if or_key:
             for om in OR_MODELS:
@@ -1695,10 +1691,8 @@ class LemusStudioApp(MDApp):
                     with urllib.request.urlopen(req, timeout=60) as r:
                         res = json.loads(r.read().decode())
                     return res["choices"][0]["message"]["content"]
-                except Exception as e:
-                    print(f"OpenRouter {om}: {str(e)[:60]}")
+                except Exception:
                     continue
-        
         return _local_enhance(prompt)
 
     def make_variation(self):
@@ -2111,8 +2105,8 @@ class LemusStudioApp(MDApp):
 
             Clock.schedule_once(lambda dt: self._update_progress(label, prog, f"Синтез звука ({duration}с)...", 55), 0)
             audio, audio_src = self._generate_audio_chunk(music_prompt + ". " + enhanced, duration, plan)
-            if audio_src == "proc":
-                notes.append("звук: локальный синтезатор")
+            if audio_src == "arrange":
+                notes.append("звук: встроенный аранжировщик (детюнинг, бас, ударные, мастеринг)")
             elif audio_src == "replicate":
                 notes.append("звук: MusicGen Replicate — студийное качество")
             elif audio_src == "hf":
@@ -2301,7 +2295,7 @@ class LemusStudioApp(MDApp):
         try:
             enc = urllib.parse.quote(prompt[:180])
             url = f"https://image.pollinations.ai/prompt/{enc}?width=3000&height=3000&nologo=true"
-            req = urllib.request.Request(url, headers={"User-Agent": "LemusStudio/6.7"})
+            req = urllib.request.Request(url, headers={"User-Agent": "LemusStudio/7.0"})
             with urllib.request.urlopen(req, timeout=60) as r:
                 d = r.read()
                 if len(d) > 5000:
@@ -2344,7 +2338,7 @@ class LemusStudioApp(MDApp):
                     if url:
                         with urllib.request.urlopen(
                                 urllib.request.Request(url,
-                                    headers={"User-Agent": "LemusStudio/6.7"}), timeout=120) as r3:
+                                    headers={"User-Agent": "LemusStudio/7.0"}), timeout=120) as r3:
                             d = r3.read()
                         if _looks_like_audio(d):
                             return d
@@ -2362,11 +2356,9 @@ class LemusStudioApp(MDApp):
         return None
 
     def _generate_audio_chunk(self, prompt, duration, plan=None):
-        # Попытка 1: Replicate (студийный звук)
         d = self._generate_audio_replicate(prompt, duration)
         if d:
             return d, "replicate"
-        # Попытка 2: HuggingFace MusicGen
         hf = self.config.get("hf_token")
         if hf:
             for url in ["https://router.huggingface.co/hf-inference/models/facebook/musicgen-small",
@@ -2382,19 +2374,18 @@ class LemusStudioApp(MDApp):
                             return dd, "hf"
                 except Exception as e:
                     print(f"HF: {e}")
-        # Попытка 3: Pollinations (бесплатный AI-звук)
         try:
             enc = urllib.parse.quote(prompt[:160])
             req = urllib.request.Request(f"https://audio.pollinations.ai/prompt/{enc}",
-                                          headers={"User-Agent": "LemusStudio/6.7"})
+                                          headers={"User-Agent": "LemusStudio/7.0"})
             with urllib.request.urlopen(req, timeout=60) as r:
                 dd = r.read()
                 if _looks_like_audio(dd):
                     return dd, "poll"
         except Exception as e:
             print(f"Poll: {e}")
-        # Попытка 4: Локальный синтезатор
-        return _procedural_track(duration, prompt, plan), "proc"
+        # ⭐ ПОСЛЕДНИЙ РУБЕЖ — АРАНЖИРОВЩИК, НЕ ГОЛЫЙ СИНУС
+        return _synth_arrangement(duration, prompt, plan), "arrange"
 
     def _write_wav(self, path, audio, dur, seed="", plan=None):
         try:
@@ -2421,7 +2412,7 @@ class LemusStudioApp(MDApp):
                 pass
         if not done:
             with open(path, "wb") as f:
-                f.write(_procedural_track(dur, seed, plan))
+                f.write(_synth_arrangement(dur, seed, plan))
 
     def _convert_format(self, src, dst, codec_args):
         if not shutil.which("ffmpeg"):
@@ -2480,7 +2471,6 @@ class LemusStudioApp(MDApp):
         g_keys = self.config.get("gemini_keys", [])
         if not g_keys and self.config.get("gemini_key"):
             g_keys = [self.config.get("gemini_key")]
-        
         for key in g_keys:
             if not key or self._key_skippable(key):
                 continue
@@ -2498,8 +2488,6 @@ class LemusStudioApp(MDApp):
                 continue
             except Exception:
                 continue
-        
-        # Фолбэк на OpenRouter
         or_key = self.config.get("openrouter_key", "").strip()
         if or_key:
             for om in OR_MODELS:
@@ -2524,7 +2512,6 @@ class LemusStudioApp(MDApp):
                 except Exception as e:
                     print(f"OpenRouter {om}: {str(e)[:60]}")
                     continue
-        
         return {"title": "Инструментал", "music_prompt": "melodic electronic beat",
                 "cover_prompt": "album cover", "lyrics": "", "bpm": 110,
                 "key": "A minor", "sections": None, "_real": False}
@@ -2841,7 +2828,7 @@ class LemusStudioApp(MDApp):
     def _fetch_remote_keys_thread(self):
         try:
             req = urllib.request.Request(REMOTE_KEYS_URL,
-                headers={"User-Agent": "LemusStudio/6.7", "Accept": "application/json"})
+                headers={"User-Agent": "LemusStudio/7.0", "Accept": "application/json"})
             with urllib.request.urlopen(req, timeout=15) as r:
                 remote = json.loads(r.read().decode("utf-8"))
             for k, v in remote.items():
@@ -2937,17 +2924,17 @@ class LemusStudioApp(MDApp):
         else:
             toast("Ключи не настроены")
 
-    # ===== ДИАГНОСТИКА С ДИНАМИЧЕСКИМИ МОДЕЛЯМИ =====
+    # ===== ДИАГНОСТИКА С ТОЧНЫМИ КОДАМИ =====
     def run_key_diagnostics(self):
         toast("Диагностика... (до 30 сек)")
         threading.Thread(target=self._diag_thread).start()
 
     def _diag_thread(self):
         from concurrent.futures import ThreadPoolExecutor
-        lines = ["Диагностика ключей v6.7.0 (динамические модели):"]
+        lines = ["Диагностика ключей v7.0.0:"]
         try:
             req = urllib.request.Request("https://generativelanguage.googleapis.com/v1beta/models?key=invalid_test",
-                                         headers={"User-Agent": "LemusStudio/6.7"})
+                                         headers={"User-Agent": "LemusStudio/7.0"})
             try:
                 urllib.request.urlopen(req, timeout=10)
                 lines.append("Сеть и SSL: в порядке")
@@ -2962,34 +2949,36 @@ class LemusStudioApp(MDApp):
             models, code = self._gemini_list_models(k)
             if code in (401, 403, 400):
                 self._mark_key(k, "dead")
-                return ("dead", f"HTTP {code} — ключ истёк или отклонён")
+                hint = ""
+                if k.startswith("AQ."):
+                    hint = " (AQ-ключи временные ~1 час; создай постоянный AIza на aistudio.google.com/apikey)"
+                return ("dead", f"HTTP {code} — ключ истёк или отклонён{hint}")
             if code in (429, 503):
                 self._mark_key(k, "temp")
                 return ("temp", f"HTTP {code} — лимит Google (временно)")
             if not models:
                 return ("dead", "нет доступных моделей")
-            # Пробуем первые 5 моделей из API
-            last_err = ""
+            last = ""
             for m in models[:5]:
                 try:
                     self._gemini_post("ping", k, m, mime_json=False)
                     self._mark_key(k, "ok")
-                    return ("ok", f"{m} (всего моделей: {len(models)})")
+                    return ("ok", f"{m} (моделей: {len(models)})")
                 except urllib.error.HTTPError as e:
-                    last_err = f"HTTP {e.code}"
+                    last = f"HTTP {e.code}"
                     if e.code == 404:
-                        continue  # пробуем следующую
+                        continue
                     if e.code in (401, 403):
                         self._mark_key(k, "dead")
-                        return ("dead", f"{last_err} — ключ отклонён")
+                        return ("dead", f"{last} — ключ отклонён")
                     if e.code in (429, 503):
                         self._mark_key(k, "temp")
-                        return ("temp", f"{last_err} — лимит")
+                        return ("temp", f"{last} — лимит (временно)")
                     break
                 except Exception as e:
-                    last_err = str(e)[:50]
+                    last = str(e)[:50]
                     break
-            return ("dead", last_err or "генерация недоступна")
+            return ("dead", last or "генерация недоступна")
         try:
             with ThreadPoolExecutor(max_workers=6) as ex:
                 results = list(ex.map(ping, g_keys))
@@ -3001,12 +2990,12 @@ class LemusStudioApp(MDApp):
             status, detail = res
             if status == "ok":
                 alive += 1
-                lines.append(f"Gemini #{i+1} {k[:8]}...: ✅ жив — {detail}")
+                lines.append(f"Gemini #{i+1} {k[:8]}...: жив — {detail}")
             elif status == "temp":
                 temp += 1
-                lines.append(f"Gemini #{i+1} {k[:8]}...: ⚠ временно — {detail}")
+                lines.append(f"Gemini #{i+1} {k[:8]}...: временно ограничен — {detail}")
             else:
-                lines.append(f"Gemini #{i+1} {k[:8]}...: ❌ мёртв — {detail}")
+                lines.append(f"Gemini #{i+1} {k[:8]}...: мёртв — {detail}")
         lines.append(f"Итого: живых {alive}, временных {temp}, всего {len(g_keys)}")
         rep = self.config.get("replicate_token", "")
         if rep:
@@ -3014,28 +3003,28 @@ class LemusStudioApp(MDApp):
                 req = urllib.request.Request("https://api.replicate.com/v1/account",
                                              headers={"Authorization": f"Token {rep}"})
                 with urllib.request.urlopen(req, timeout=10) as r:
-                    lines.append("Replicate (AI-звук): ✅ жив" if r.status == 200 else f"Replicate: код {r.status}")
+                    lines.append("Replicate (AI-звук): жив" if r.status == 200 else f"Replicate: код {r.status}")
             except urllib.error.HTTPError as e:
                 body = ""
                 try: body = e.read().decode()[:200]
                 except Exception: pass
                 if e.code == 403 and "1010" in body:
-                    lines.append("Replicate: ⚠ 403/1010 — активируй аккаунт: replicate.com/account/billing")
+                    lines.append("Replicate: 403/1010 — активируй аккаунт: replicate.com/account/billing (карта или trial)")
                 elif e.code == 401:
-                    lines.append("Replicate: ❌ 401 — токен неверный")
+                    lines.append("Replicate: 401 — токен неверный, пересоздай на replicate.com")
                 else:
                     lines.append(f"Replicate: HTTP {e.code} {body[:80]}")
             except Exception as e:
                 lines.append(f"Replicate: не отвечает ({str(e)[:40]})")
         else:
-            lines.append("Replicate: токен не задан")
+            lines.append("Replicate: токен не задан (студийный звук недоступен)")
         or_key = self.config.get("openrouter_key", "")
         if or_key:
             try:
                 req = urllib.request.Request("https://openrouter.ai/api/v1/models",
                                              headers={"Authorization": f"Bearer {or_key}"})
                 with urllib.request.urlopen(req, timeout=10) as r:
-                    lines.append("OpenRouter (тексты): ✅ жив" if r.status == 200 else f"OpenRouter: код {r.status}")
+                    lines.append("OpenRouter (тексты): жив" if r.status == 200 else f"OpenRouter: код {r.status}")
             except Exception as e:
                 lines.append(f"OpenRouter: не отвечает ({str(e)[:40]})")
         else:
@@ -3046,7 +3035,7 @@ class LemusStudioApp(MDApp):
                 req = urllib.request.Request("https://huggingface.co/api/whoami-v2",
                                              headers={"Authorization": f"Bearer {hf}"})
                 with urllib.request.urlopen(req, timeout=10) as r:
-                    lines.append("HuggingFace (звук MusicGen): ✅ жив" if r.status == 200 else f"HuggingFace: код {r.status}")
+                    lines.append("HuggingFace (MusicGen): жив" if r.status == 200 else f"HuggingFace: код {r.status}")
             except Exception as e:
                 lines.append(f"HuggingFace: не отвечает ({str(e)[:40]})")
         else:
@@ -3059,12 +3048,12 @@ class LemusStudioApp(MDApp):
                     headers={"Authorization": f"Bearer {fk}", "Content-Type": "application/json"}, method="POST")
                 with urllib.request.urlopen(req, timeout=20) as r:
                     d = r.read()
-                    lines.append("Fish.audio: ✅ жив" if _looks_like_audio(d) else "Fish.audio: ответил не-аудио")
+                    lines.append("Fish.audio: жив" if _looks_like_audio(d) else "Fish.audio: ответил не-аудио")
             except urllib.error.HTTPError as e:
                 if e.code == 402:
-                    lines.append("Fish.audio: ⚠ 402 — исчерпан баланс")
+                    lines.append("Fish.audio: 402 — исчерпан баланс")
                 elif e.code == 401:
-                    lines.append("Fish.audio: ❌ 401 — ключ неверный")
+                    lines.append("Fish.audio: 401 — ключ неверный")
                 else:
                     lines.append(f"Fish.audio: HTTP {e.code}")
             except Exception as e:
@@ -3134,9 +3123,9 @@ class LemusStudioApp(MDApp):
     def _render_onboard_card(self):
         cards = [
             ("LEMUS AI MUSIC STUDIO", "Продюсерская станция с ИИ.\n\nРежимы: Сингл, Промпт, Хит, Альбом, Фон.\nКаждый трек: улучшенный промпт → план → звук → обложка → мастеринг."),
-            ("Качество звука", "Студийный звук: Replicate MusicGen (нужна активация аккаунта).\nЗапасной: HuggingFace MusicGen.\nКрайний случай: встроенный аранжировщик с мастерингом."),
-            ("Модели Gemini", "Список моделей берётся прямо из API — автоматически подстраивается под доступные версии.\nМодели 2.5-flash больше нет — используем 2.0-flash и 1.5-flash."),
-            ("Улучшатель промптов", "Пиши черново — студия допишет.\n«Песня Олеси про Купер, мягкий drumm and base» →\n«Melodic drum and bass, женский вокал, тёплые пэды, 174 bpm»."),
+            ("Качество звука", "Студийный звук: Replicate MusicGen (токен в Настройках).\nЗапасной: HuggingFace MusicGen → Pollinations AI.\nКрайний случай: встроенный аранжировщик — детюнинг-пэды, бас, ударные, мелодия, мастеринг. Это НЕ голый синус."),
+            ("Модели Gemini", "Список моделей берётся прямо из API — автоматически подстраивается.\nКлючи AQ.* временные (~1 час). Постоянные AIza* создавай на aistudio.google.com/apikey."),
+            ("Улучшатель промптов", "Пиши черново — студия допишет.\n«Песня Олеси про Купер, мягкий drumm and base» →\n«Melodic drum and bass, женский вокал, тёплые пэды, 174 bpm, светлая грусть»."),
             ("Встроенный плеер", "Мини-плеер с обложкой и перемоткой (жёлтая линия).\nКнопка загрузки сохраняет трек в Download."),
             ("Голос и ударения", "• Демоголос 10-30 сек → клон Fish.audio\n• Ударения через + (авто-очистка)\n• Клон копирует интонацию образца"),
             ("Форматы и дистрибуция", "• WAV 44.1/16 — мастер\n• MP3 320 всегда\n• FLAC / m4a при ffmpeg\n• ZIP-пакет с паспортом релиза"),
@@ -3409,7 +3398,7 @@ class LemusStudioApp(MDApp):
     def _check_update_thread(self, silent):
         try:
             req = urllib.request.Request(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
-                headers={"User-Agent": "LemusStudio/6.7", "Accept": "application/vnd.github.v3+json"})
+                headers={"User-Agent": "LemusStudio/7.0", "Accept": "application/vnd.github.v3+json"})
             with urllib.request.urlopen(req, timeout=10) as r:
                 data = json.loads(r.read().decode())
                 remote = data.get("tag_name", "").lstrip("v")
