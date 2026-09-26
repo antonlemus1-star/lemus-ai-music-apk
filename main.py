@@ -11,7 +11,7 @@ def _log(msg):
     except Exception:
         pass
 
-_log("=== STARTUP v6.5.0 ===")
+_log("=== STARTUP v6.7.0 ===")
 
 try:
     import certifi, ssl
@@ -91,7 +91,7 @@ except Exception as e:
     _log(f"FAIL kivymd: {e}")
     raise
 
-CURRENT_VERSION = "6.5.0"
+CURRENT_VERSION = "6.7.0"
 CONFIG_FILE = "lemus_studio_config.json"
 PROJECTS_FILE = "lemus_projects_db.json"
 HISTORY_FILE = "lemus_prompts_history.json"
@@ -101,9 +101,22 @@ MASTER_HASH = hashlib.sha256(MASTER_KEYWORD.encode()).hexdigest()
 GITHUB_REPO = "antonlemus/lemus-ai-music-apk"
 REMOTE_KEYS_URL = "https://gist.githubusercontent.com/antonlemus/YOUR_GIST_ID/raw/keys.json"
 
+# ⭐ АКТУАЛЬНЫЕ МОДЕЛИ GEMINI (без gemini-2.5-flash — он отключён для новых пользователей)
 GEMINI_MODELS = [
-    "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash",
-    "gemini-2.0-flash-lite", "gemini-1.5-pro", "gemini-1.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash-latest",
+    "gemini-1.5-pro-latest",
+    "gemini-2.0-flash-exp",
+    "gemini-exp-1206",
+    "gemini-pro-latest",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
+]
+OR_MODELS = [
+    "qwen/qwen3.8-27b:free",
+    "openrouter/auto",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "deepseek/deepseek-chat:free",
 ]
 
 REPLICATE_MUSIC_MODELS = [
@@ -119,7 +132,7 @@ REPLICATE_MUSIC_MODELS = [
 ]
 
 EMPTY_CONFIG = {
-    "gemini_keys": [], "gemini_key": "", "gemini_model": "gemini-2.5-flash",
+    "gemini_keys": [], "gemini_key": "", "gemini_model": "gemini-2.0-flash",
     "openrouter_key": "", "yandex_token": "", "hf_token": "", "fish_key": "", "groq_key": "",
     "replicate_token": "",
     "is_master_activated": False, "activated_at": None, "activation_source": None,
@@ -872,7 +885,7 @@ MDBoxLayout:
 
                     MDTextField:
                         id: cfg_gemini
-                        hint_text: "Google Gemini (добавится к списку, не стирает его)"
+                        hint_text: "Google Gemini (AIza... из aistudio.google.com/apikey)"
                         mode: "rectangle"
                         line_color_normal: 0.26, 0.24, 0.36, 1
                         line_color_focus: 0.60, 0.48, 0.96, 1
@@ -1388,6 +1401,7 @@ class LemusStudioApp(MDApp):
         self._last_gen = None
         self._enhanced_cache = {}
         self._gemini_cache = {}
+        self._key_state = {}
 
         self.file_manager = MDFileManager(
             exit_manager=self.exit_file_manager,
@@ -1458,6 +1472,19 @@ class LemusStudioApp(MDApp):
             self.save_config_to_disk()
             toast(HINTS[hk])
 
+    # ===== КЭШ ЗДОРОВЬЯ КЛЮЧЕЙ =====
+    def _mark_key(self, key, status):
+        self._key_state[key] = (status, time.time())
+
+    def _key_skippable(self, key):
+        st = self._key_state.get(key)
+        if not st:
+            return False
+        status, ts = st
+        if status == "dead" and time.time() - ts < 1800:
+            return True
+        return False
+
     # ===== УЛУЧШАТЕЛЬ ПРОМПТОВ =====
     def enhance_single(self):
         w = self.modes["single"].ids
@@ -1496,42 +1523,59 @@ class LemusStudioApp(MDApp):
             print(f"enhance llm: {e}")
         return _local_enhance(raw)
 
-    # ===== GEMINI: АВТОПОИСК МОДЕЛЕЙ + РОТАЦИЯ + РЕТПРАЙ 503 =====
+    # ===== GEMINI: ДИНАМИЧЕСКИЙ СПИСОК МОДЕЛЕЙ ИЗ API =====
     def _gemini_list_models(self, key):
-        cached = self._gemini_cache.get(key)
-        if cached is not None:
-            return cached
-        models = []
-        for auth in ("key", "bearer"):
+        """Берёт список моделей прямо из API — самый надёжный способ!"""
+        if key in self._gemini_cache:
+            return self._gemini_cache[key], None
+        last_code = None
+        try:
+            url = ("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key="
+                   + urllib.parse.quote(key.strip()))
+            req = urllib.request.Request(url, headers={"x-goog-api-key": key.strip()})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                data = json.loads(r.read().decode("utf-8"))
+            models = []
+            for m in data.get("models", []):
+                name = m.get("name", "").replace("models/", "")
+                # Берём все Gemini модели (текстовые)
+                if not name.startswith("gemini"):
+                    continue
+                # Исключаем не-текстовые
+                if any(x in name for x in ("embedding", "image", "tts", "audio", "vision", "live")):
+                    continue
+                methods = m.get("supportedGenerationMethods", [])
+                if "generateContent" in methods:
+                    models.append(name)
+            
+            # ⭐ ПРИОРИТЕТ: flash → pro → exp
+            def sort_key(m):
+                if "2.0-flash" in m and "exp" not in m: return 0
+                if "2.0-flash-exp" in m: return 1
+                if "1.5-flash" in m: return 2
+                if "1.5-pro" in m: return 3
+                if "exp" in m: return 4
+                return 10
+            
+            models.sort(key=sort_key)
+            self._gemini_cache[key] = models
+            return models, None
+        except urllib.error.HTTPError as e:
+            last_code = e.code
+            body = ""
             try:
-                url = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=100"
-                headers = {"x-goog-api-key": key.strip()} if auth == "key" else {"Authorization": f"Bearer {key.strip()}"}
-                if auth == "key":
-                    url += "&key=" + urllib.parse.quote(key.strip())
-                req = urllib.request.Request(url, headers=headers)
-                with urllib.request.urlopen(req, timeout=20) as r:
-                    data = json.loads(r.read().decode("utf-8"))
-                for m in data.get("models", []):
-                    name = m.get("name", "").replace("models/", "")
-                    if name.startswith("gemini"):
-                        models.append(name)
-                if models:
-                    break
+                body = e.read().decode()[:200]
             except Exception:
-                continue
-        pref = [m for m in models if not any(x in m for x in ("embedding", "image", "tts", "audio", "vision", "live"))]
-        pref.sort(key=lambda m: (0 if "flash" in m else 1))
-        result = pref or models
-        self._gemini_cache[key] = result
-        return result
+                pass
+            print(f"Gemini list models: HTTP {e.code} {body}")
+        except Exception as e:
+            last_code = last_code or 0
+            print(f"Gemini list models error: {e}")
+        return None, last_code
 
-    def _gemini_post(self, prompt, key, model, auth, mime_json=True):
+    def _gemini_post(self, prompt, key, model, mime_json=True):
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-        headers = {"Content-Type": "application/json"}
-        if auth == "bearer":
-            headers["Authorization"] = f"Bearer {key.strip()}"
-        else:
-            headers["x-goog-api-key"] = key.strip()
+        headers = {"Content-Type": "application/json", "x-goog-api-key": key.strip()}
         gc = {"temperature": 0.8}
         if mime_json:
             gc["response_mime_type"] = "application/json"
@@ -1545,81 +1589,117 @@ class LemusStudioApp(MDApp):
         return res["candidates"][0]["content"]["parts"][0]["text"]
 
     def _call_gemini_native(self, prompt, api_key, model=None):
-        """Ретрай при 503 Service Unavailable (временная перегрузка Google)"""
-        api_models = self._gemini_list_models(api_key) or []
-        models_to_try = api_models if api_models else list(GEMINI_MODELS)
-        if model and model not in models_to_try:
-            models_to_try = [model] + models_to_try
+        # ⭐ ГЛАВНОЕ: берём список моделей из API
+        api_models, code = self._gemini_list_models(api_key)
+        
+        if code in (401, 403, 400):
+            self._mark_key(api_key, "dead")
+            raise RuntimeError(f"Gemini dead: {code}")
+        if code in (429, 503):
+            self._mark_key(api_key, "temp")
+            raise RuntimeError(f"Gemini temp: {code}")
+        
+        # Формируем список моделей: API + фолбэк
+        models_to_try = []
+        if model:
+            models_to_try.append(model)
+        if api_models:
+            models_to_try.extend(api_models[:8])
+        # Фолбэк на статический список
+        for m in GEMINI_MODELS:
+            if m not in models_to_try:
+                models_to_try.append(m)
+        
         last_err = None
-        retries_503 = 0
-        for m in models_to_try[:6]:
-            for auth in ("key", "bearer"):
-                try:
-                    text = self._gemini_post(prompt, api_key, m, auth, mime_json=True)
-                    return self._clean_json(text)
-                except urllib.error.HTTPError as e:
-                    last_err = e
-                    if e.code == 503:
-                        retries_503 += 1
-                        if retries_503 < 3:
-                            time.sleep(2 * retries_503)
-                            continue
-                        break
-                    if e.code in (401, 403):
-                        if auth == "key":
-                            continue
-                        break
-                    if e.code in (400, 404):
-                        break
-                    raise
-                except Exception as e:
-                    last_err = e
+        for m in models_to_try[:10]:
+            try:
+                text = self._gemini_post(prompt, api_key, m, mime_json=True)
+                self._mark_key(api_key, "ok")
+                return self._clean_json(text)
+            except urllib.error.HTTPError as e:
+                last_err = e
+                # 404 = модель недоступна, пробуем следующую
+                if e.code == 404:
+                    print(f"Gemini: модель {m} недоступна (404), пробуем следующую")
+                    continue
+                if e.code in (401, 403):
+                    self._mark_key(api_key, "dead")
                     break
+                if e.code in (429, 503):
+                    self._mark_key(api_key, "temp")
+                    time.sleep(1)
+                    break
+                if e.code == 400:
+                    continue
+                break
+            except Exception as e:
+                last_err = e
+                break
         if last_err:
             raise last_err
-        raise RuntimeError("Gemini: модели недоступны")
+        raise RuntimeError("Gemini: все модели недоступны")
 
     def _call_llm_text(self, prompt):
         g_keys = self.config.get("gemini_keys", [])
         if not g_keys and self.config.get("gemini_key"):
             g_keys = [self.config.get("gemini_key")]
+        
         for key in g_keys:
-            if not key:
+            if not key or self._key_skippable(key):
                 continue
-            api_models = self._gemini_list_models(key) or GEMINI_MODELS
-            for m in api_models[:3]:
-                for auth in ("key", "bearer"):
-                    try:
-                        return self._gemini_post(prompt, key, m, auth, mime_json=False)
-                    except urllib.error.HTTPError as e:
-                        if e.code == 503:
-                            time.sleep(1.5)
-                            continue
-                        if e.code in (401, 403):
-                            if auth == "key":
-                                continue
-                            break
-                        if e.code in (400, 404):
-                            break
+            api_models, code = self._gemini_list_models(key)
+            if code in (401, 403, 400):
+                self._mark_key(key, "dead")
+                continue
+            if code in (429, 503):
+                self._mark_key(key, "temp")
+                continue
+            
+            cand = []
+            if api_models:
+                cand = api_models[:5]
+            else:
+                cand = GEMINI_MODELS[:5]
+            
+            for m in cand:
+                try:
+                    return self._gemini_post(prompt, key, m, mime_json=False)
+                except urllib.error.HTTPError as e:
+                    if e.code == 404:
+                        continue  # модель недоступна, пробуем следующую
+                    if e.code in (401, 403):
+                        self._mark_key(key, "dead")
                         break
-                    except Exception:
+                    if e.code in (429, 503):
+                        self._mark_key(key, "temp")
+                        time.sleep(1)
                         break
+                    if e.code == 400:
+                        continue
+                    break
+                except Exception:
+                    break
+        
+        # Фолбэк на OpenRouter
         or_key = self.config.get("openrouter_key", "").strip()
         if or_key:
-            try:
-                headers = {"Authorization": f"Bearer {or_key}", "Content-Type": "application/json"}
-                payload = json.dumps({
-                    "model": "qwen/qwen3.8-27b:free",
-                    "messages": [{"role": "system", "content": ENHANCE_SYSTEM},
-                                 {"role": "user", "content": prompt}]}).encode("utf-8")
-                req = urllib.request.Request("https://openrouter.ai/api/v1/chat/completions",
-                                             data=payload, headers=headers)
-                with urllib.request.urlopen(req, timeout=60) as r:
-                    res = json.loads(r.read().decode())
+            for om in OR_MODELS:
+                try:
+                    headers = {"Authorization": f"Bearer {or_key}", "Content-Type": "application/json"}
+                    payload = json.dumps({
+                        "model": om,
+                        "messages": [{"role": "system", "content": ENHANCE_SYSTEM},
+                                     {"role": "user", "content": prompt}]}).encode("utf-8")
+                    req = urllib.request.Request("https://openrouter.ai/api/v1/chat/completions",
+                                                 data=payload, headers=headers)
+                    with urllib.request.urlopen(req, timeout=60) as r:
+                        res = json.loads(r.read().decode())
                     return res["choices"][0]["message"]["content"]
-            except Exception:
-                pass
-        return ""
+                except Exception as e:
+                    print(f"OpenRouter {om}: {str(e)[:60]}")
+                    continue
+        
+        return _local_enhance(prompt)
 
     def make_variation(self):
         if not self._last_gen:
@@ -1989,7 +2069,7 @@ class LemusStudioApp(MDApp):
             toast("Укажи концепцию!")
             return
         self.add_to_history("Альбом", f"{theme} / {genre} / {cnt}x{dur}с")
-        w.alb_status_label.text = "Gemini пишет концепцию EP..."
+        w.alb_status_label.text = "Пишу концепцию EP..."
         threading.Thread(target=self._worker_album, args=(theme, genre, cnt, dur)).start()
 
     def _worker_track(self, raw, genre, dur, rtype, label, prog):
@@ -2004,7 +2084,7 @@ class LemusStudioApp(MDApp):
             Clock.schedule_once(lambda dt: self._update_progress(label, prog, "Улучшаю промпт...", 8), 0)
             enhanced = self._enhanced_cache.pop(mode, None) or self._enhance_sync(raw_desc)
             Clock.schedule_once(lambda dt: self._show_enhanced(mode, enhanced), 0)
-            Clock.schedule_once(lambda dt: self._update_progress(label, prog, "Gemini пишет план...", 15), 0)
+            Clock.schedule_once(lambda dt: self._update_progress(label, prog, "Пишу план трека...", 15), 0)
             prompt = self._build_plan_prompt(enhanced, genre, duration)
             llm = self._producer_with_critic(prompt)
             plan = {
@@ -2021,6 +2101,10 @@ class LemusStudioApp(MDApp):
             if not llm.get("_real"):
                 notes.append("ключи не ответили — план локальный")
                 plan = {"bpm": None, "key": None, "sections": None}
+            elif llm.get("_via") == "openrouter":
+                notes.append("текст через OpenRouter")
+            elif llm.get("_via") == "gemini":
+                notes.append("текст через Gemini")
 
             Clock.schedule_once(lambda dt: self._update_progress(label, prog, "Рисуем обложку 3000x3000...", 35), 0)
             cover = self._generate_image(llm.get("cover_prompt", f"{genre} cover"))
@@ -2028,9 +2112,13 @@ class LemusStudioApp(MDApp):
             Clock.schedule_once(lambda dt: self._update_progress(label, prog, f"Синтез звука ({duration}с)...", 55), 0)
             audio, audio_src = self._generate_audio_chunk(music_prompt + ". " + enhanced, duration, plan)
             if audio_src == "proc":
-                notes.append("реальный ИИ-бэкенд недоступен — звук из локального синтезатора")
+                notes.append("звук: локальный синтезатор")
             elif audio_src == "replicate":
-                notes.append("аудио сгенерировано MusicGen (Replicate) — студийное качество")
+                notes.append("звук: MusicGen Replicate — студийное качество")
+            elif audio_src == "hf":
+                notes.append("звук: MusicGen HuggingFace")
+            elif audio_src == "poll":
+                notes.append("звук: Pollinations AI")
 
             if lyrics and self.current_voice_sample:
                 Clock.schedule_once(lambda dt: self._update_progress(label, prog, "Клонирование голоса...", 75), 0)
@@ -2205,7 +2293,7 @@ class LemusStudioApp(MDApp):
         except Exception: pass
         idea = self.modes["album"].ids.alb_extra_idea.text.strip()
         dur = int(self.modes["album"].ids.alb_duration_input.text.strip() or "90")
-        self.modes["album"].ids.alb_status_label.text = "Gemini пишет трек..."
+        self.modes["album"].ids.alb_status_label.text = "Пишу трек..."
         threading.Thread(target=self._worker_add_track, args=(album, idea, dur)).start()
 
     # ===== ИСТОЧНИКИ ЗВУКА / ИЗОБРАЖЕНИЯ =====
@@ -2213,7 +2301,7 @@ class LemusStudioApp(MDApp):
         try:
             enc = urllib.parse.quote(prompt[:180])
             url = f"https://image.pollinations.ai/prompt/{enc}?width=3000&height=3000&nologo=true"
-            req = urllib.request.Request(url, headers={"User-Agent": "LemusStudio/6.5"})
+            req = urllib.request.Request(url, headers={"User-Agent": "LemusStudio/6.7"})
             with urllib.request.urlopen(req, timeout=60) as r:
                 d = r.read()
                 if len(d) > 5000:
@@ -2226,7 +2314,7 @@ class LemusStudioApp(MDApp):
         token = (self.config.get("replicate_token") or "").strip()
         if not token:
             return None
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json",
+        headers = {"Authorization": f"Token {token}", "Content-Type": "application/json",
                    "Prefer": "wait=60"}
         dur = max(5, min(int(duration or 30), 120))
         for m in REPLICATE_MUSIC_MODELS:
@@ -2256,7 +2344,7 @@ class LemusStudioApp(MDApp):
                     if url:
                         with urllib.request.urlopen(
                                 urllib.request.Request(url,
-                                    headers={"User-Agent": "LemusStudio/6.5"}), timeout=120) as r3:
+                                    headers={"User-Agent": "LemusStudio/6.7"}), timeout=120) as r3:
                             d = r3.read()
                         if _looks_like_audio(d):
                             return d
@@ -2266,7 +2354,6 @@ class LemusStudioApp(MDApp):
                 except Exception: pass
                 print(f"Replicate {m['owner_model']}: HTTP {e.code} {body}")
                 if e.code == 403 and "1010" in body:
-                    print("Replicate: аккаунт не активирован (нужна карта/trial)")
                     return None
                 continue
             except Exception as e:
@@ -2275,12 +2362,15 @@ class LemusStudioApp(MDApp):
         return None
 
     def _generate_audio_chunk(self, prompt, duration, plan=None):
+        # Попытка 1: Replicate (студийный звук)
         d = self._generate_audio_replicate(prompt, duration)
         if d:
             return d, "replicate"
+        # Попытка 2: HuggingFace MusicGen
         hf = self.config.get("hf_token")
         if hf:
             for url in ["https://router.huggingface.co/hf-inference/models/facebook/musicgen-small",
+                        "https://router.huggingface.co/hf-inference/models/facebook/musicgen-medium",
                         "https://api-inference.huggingface.co/models/facebook/musicgen-small"]:
                 try:
                     headers = {"Authorization": f"Bearer {hf}", "Content-Type": "application/json"}
@@ -2292,16 +2382,18 @@ class LemusStudioApp(MDApp):
                             return dd, "hf"
                 except Exception as e:
                     print(f"HF: {e}")
+        # Попытка 3: Pollinations (бесплатный AI-звук)
         try:
             enc = urllib.parse.quote(prompt[:160])
             req = urllib.request.Request(f"https://audio.pollinations.ai/prompt/{enc}",
-                                          headers={"User-Agent": "LemusStudio/6.5"})
+                                          headers={"User-Agent": "LemusStudio/6.7"})
             with urllib.request.urlopen(req, timeout=60) as r:
                 dd = r.read()
                 if _looks_like_audio(dd):
                     return dd, "poll"
         except Exception as e:
             print(f"Poll: {e}")
+        # Попытка 4: Локальный синтезатор
         return _procedural_track(duration, prompt, plan), "proc"
 
     def _write_wav(self, path, audio, dur, seed="", plan=None):
@@ -2368,7 +2460,7 @@ class LemusStudioApp(MDApp):
         t = t.replace("+", "")
         return re.sub(r"[ \t]+", " ", t).strip()
 
-    # ===== LLM =====
+    # ===== LLM JSON =====
     def _clean_json(self, text):
         t = text.strip()
         if t.startswith("```"):
@@ -2388,37 +2480,51 @@ class LemusStudioApp(MDApp):
         g_keys = self.config.get("gemini_keys", [])
         if not g_keys and self.config.get("gemini_key"):
             g_keys = [self.config.get("gemini_key")]
+        
         for key in g_keys:
-            if not key:
+            if not key or self._key_skippable(key):
                 continue
             try:
                 res = self._call_gemini_native(user_prompt, key)
                 if isinstance(res, dict):
                     res["_real"] = True
+                    res["_via"] = "gemini"
                     return res
+            except urllib.error.HTTPError as e:
+                if e.code in (401, 403):
+                    self._mark_key(key, "dead")
+                elif e.code in (429, 503):
+                    self._mark_key(key, "temp")
+                continue
             except Exception:
                 continue
+        
+        # Фолбэк на OpenRouter
         or_key = self.config.get("openrouter_key", "").strip()
         if or_key:
-            try:
-                headers = {"Authorization": f"Bearer {or_key}", "Content-Type": "application/json",
-                           "HTTP-Referer": "https://lemus-ai-music-studio.onrender.com",
-                           "X-Title": "Lemus Studio"}
-                payload = json.dumps({
-                    "model": "qwen/qwen3.8-27b:free",
-                    "messages": [{"role": "system", "content": "Отвечай валидным JSON."},
-                                 {"role": "user", "content": user_prompt}],
-                    "response_format": {"type": "json_object"},
-                }).encode("utf-8")
-                req = urllib.request.Request("https://openrouter.ai/api/v1/chat/completions",
-                                             data=payload, headers=headers)
-                with urllib.request.urlopen(req, timeout=60) as r:
-                    res = json.loads(r.read().decode())
+            for om in OR_MODELS:
+                try:
+                    headers = {"Authorization": f"Bearer {or_key}", "Content-Type": "application/json",
+                               "HTTP-Referer": "https://lemus-ai-music-studio.onrender.com",
+                               "X-Title": "Lemus Studio"}
+                    payload = json.dumps({
+                        "model": om,
+                        "messages": [{"role": "system", "content": "Отвечай валидным JSON."},
+                                     {"role": "user", "content": user_prompt}],
+                        "response_format": {"type": "json_object"},
+                    }).encode("utf-8")
+                    req = urllib.request.Request("https://openrouter.ai/api/v1/chat/completions",
+                                                 data=payload, headers=headers)
+                    with urllib.request.urlopen(req, timeout=60) as r:
+                        res = json.loads(r.read().decode())
                     out = self._clean_json(res["choices"][0]["message"]["content"])
                     out["_real"] = True
+                    out["_via"] = "openrouter"
                     return out
-            except Exception as e:
-                print(f"OpenRouter: {str(e)[:60]}")
+                except Exception as e:
+                    print(f"OpenRouter {om}: {str(e)[:60]}")
+                    continue
+        
         return {"title": "Инструментал", "music_prompt": "melodic electronic beat",
                 "cover_prompt": "album cover", "lyrics": "", "bpm": 110,
                 "key": "A minor", "sections": None, "_real": False}
@@ -2529,7 +2635,7 @@ class LemusStudioApp(MDApp):
             extra = f" • {item.get('date','')}"
             if item.get("bpm"):
                 extra += f" • {item.get('bpm')} BPM"
-            if item.get("audio_source") == "replicate":
+            if item.get("audio_source") in ("replicate", "hf", "poll"):
                 extra += " • AI-звук"
             li = TwoLineAvatarIconListItem(text=title,
                 secondary_text=f"{genre} • {itype}{extra}")
@@ -2712,6 +2818,8 @@ class LemusStudioApp(MDApp):
             self.config["is_master_activated"] = True
             self.config["activated_at"] = time.strftime("%Y-%m-%d %H:%M")
             self.config["activation_source"] = "json"
+            self._key_state = {}
+            self._gemini_cache = {}
             self.save_config_to_disk()
             self.populate_settings_fields()
             self.update_activation_status()
@@ -2733,7 +2841,7 @@ class LemusStudioApp(MDApp):
     def _fetch_remote_keys_thread(self):
         try:
             req = urllib.request.Request(REMOTE_KEYS_URL,
-                headers={"User-Agent": "LemusStudio/6.5", "Accept": "application/json"})
+                headers={"User-Agent": "LemusStudio/6.7", "Accept": "application/json"})
             with urllib.request.urlopen(req, timeout=15) as r:
                 remote = json.loads(r.read().decode("utf-8"))
             for k, v in remote.items():
@@ -2741,6 +2849,8 @@ class LemusStudioApp(MDApp):
             self.config["is_master_activated"] = True
             self.config["activated_at"] = time.strftime("%Y-%m-%d %H:%M")
             self.config["activation_source"] = "gist"
+            self._key_state = {}
+            self._gemini_cache = {}
             self.save_config_to_disk()
             Clock.schedule_once(lambda dt: self._on_keys_loaded(True), 0)
         except Exception as e:
@@ -2757,6 +2867,8 @@ class LemusStudioApp(MDApp):
 
     def reset_all_keys(self):
         self.config = EMPTY_CONFIG.copy()
+        self._key_state = {}
+        self._gemini_cache = {}
         self.save_config_to_disk()
         self.populate_settings_fields()
         self.update_activation_status()
@@ -2801,6 +2913,8 @@ class LemusStudioApp(MDApp):
         self.config["hf_token"] = r.ids.cfg_hf.text.strip() or self.config.get("hf_token", "")
         self.config["fish_key"] = r.ids.cfg_fish.text.strip() or self.config.get("fish_key", "")
         self.config["groq_key"] = r.ids.cfg_groq.text.strip() or self.config.get("groq_key", "")
+        self._key_state = {}
+        self._gemini_cache = {}
         self.save_config_to_disk()
         self.update_activation_status()
         toast(f"Сохранено! Gemini: {len(keys)}, Replicate: {'да' if self.config.get('replicate_token') else 'нет'}")
@@ -2823,17 +2937,17 @@ class LemusStudioApp(MDApp):
         else:
             toast("Ключи не настроены")
 
-    # ===== ДИАГНОСТИКА С ТОЧНЫМИ КОДАМИ =====
+    # ===== ДИАГНОСТИКА С ДИНАМИЧЕСКИМИ МОДЕЛЯМИ =====
     def run_key_diagnostics(self):
         toast("Диагностика... (до 30 сек)")
         threading.Thread(target=self._diag_thread).start()
 
     def _diag_thread(self):
         from concurrent.futures import ThreadPoolExecutor
-        lines = ["Диагностика ключей v6.5.0:"]
+        lines = ["Диагностика ключей v6.7.0 (динамические модели):"]
         try:
             req = urllib.request.Request("https://generativelanguage.googleapis.com/v1beta/models?key=invalid_test",
-                                         headers={"User-Agent": "LemusStudio/6.5"})
+                                         headers={"User-Agent": "LemusStudio/6.7"})
             try:
                 urllib.request.urlopen(req, timeout=10)
                 lines.append("Сеть и SSL: в порядке")
@@ -2845,74 +2959,98 @@ class LemusStudioApp(MDApp):
         if not g_keys and self.config.get("gemini_key"):
             g_keys = [self.config.get("gemini_key")]
         def ping(k):
-            ms = []
-            errmsg = ""
-            try:
-                ms = self._gemini_list_models(k) or []
-            except Exception as e:
-                errmsg = str(e)[:60]
-            if not ms:
-                return None, 0, (errmsg or "сервер отклонил ключ / список моделей пуст")
-            for m in ms[:2]:
+            models, code = self._gemini_list_models(k)
+            if code in (401, 403, 400):
+                self._mark_key(k, "dead")
+                return ("dead", f"HTTP {code} — ключ истёк или отклонён")
+            if code in (429, 503):
+                self._mark_key(k, "temp")
+                return ("temp", f"HTTP {code} — лимит Google (временно)")
+            if not models:
+                return ("dead", "нет доступных моделей")
+            # Пробуем первые 5 моделей из API
+            last_err = ""
+            for m in models[:5]:
                 try:
-                    self._call_gemini_native("ping", k, model=m)
-                    return m, len(ms), None
+                    self._gemini_post("ping", k, m, mime_json=False)
+                    self._mark_key(k, "ok")
+                    return ("ok", f"{m} (всего моделей: {len(models)})")
+                except urllib.error.HTTPError as e:
+                    last_err = f"HTTP {e.code}"
+                    if e.code == 404:
+                        continue  # пробуем следующую
+                    if e.code in (401, 403):
+                        self._mark_key(k, "dead")
+                        return ("dead", f"{last_err} — ключ отклонён")
+                    if e.code in (429, 503):
+                        self._mark_key(k, "temp")
+                        return ("temp", f"{last_err} — лимит")
+                    break
                 except Exception as e:
-                    errmsg = str(e)[:60]
-            return None, len(ms), (errmsg or "генерация недоступна")
+                    last_err = str(e)[:50]
+                    break
+            return ("dead", last_err or "генерация недоступна")
         try:
             with ThreadPoolExecutor(max_workers=6) as ex:
                 results = list(ex.map(ping, g_keys))
         except Exception:
             results = [ping(k) for k in g_keys]
         alive = 0
+        temp = 0
         for i, (k, res) in enumerate(zip(g_keys, results)):
-            m, cnt, errmsg = res
-            if m:
+            status, detail = res
+            if status == "ok":
                 alive += 1
-                lines.append(f"Gemini #{i+1} {k[:8]}...: жив ({m}), моделей: {cnt}")
+                lines.append(f"Gemini #{i+1} {k[:8]}...: ✅ жив — {detail}")
+            elif status == "temp":
+                temp += 1
+                lines.append(f"Gemini #{i+1} {k[:8]}...: ⚠ временно — {detail}")
             else:
-                lines.append(f"Gemini #{i+1} {k[:8]}...: {errmsg}")
-        lines.append(f"Итого живых Gemini: {alive}/{len(g_keys)}")
+                lines.append(f"Gemini #{i+1} {k[:8]}...: ❌ мёртв — {detail}")
+        lines.append(f"Итого: живых {alive}, временных {temp}, всего {len(g_keys)}")
         rep = self.config.get("replicate_token", "")
         if rep:
             try:
                 req = urllib.request.Request("https://api.replicate.com/v1/account",
-                                             headers={"Authorization": f"Bearer {rep}"})
+                                             headers={"Authorization": f"Token {rep}"})
                 with urllib.request.urlopen(req, timeout=10) as r:
-                    lines.append("Replicate (AI-звук): жив" if r.status == 200 else f"Replicate: код {r.status}")
+                    lines.append("Replicate (AI-звук): ✅ жив" if r.status == 200 else f"Replicate: код {r.status}")
             except urllib.error.HTTPError as e:
                 body = ""
                 try: body = e.read().decode()[:200]
                 except Exception: pass
                 if e.code == 403 and "1010" in body:
-                    lines.append("Replicate: 403/1010 — аккаунт не активирован. Нужна карта или trial на replicate.com/account/billing")
+                    lines.append("Replicate: ⚠ 403/1010 — активируй аккаунт: replicate.com/account/billing")
                 elif e.code == 401:
-                    lines.append("Replicate: 401 — токен неверный. Пересоздай на replicate.com/API tokens")
+                    lines.append("Replicate: ❌ 401 — токен неверный")
                 else:
-                    lines.append(f"Replicate: HTTP {e.code} {body}")
+                    lines.append(f"Replicate: HTTP {e.code} {body[:80]}")
             except Exception as e:
                 lines.append(f"Replicate: не отвечает ({str(e)[:40]})")
         else:
-            lines.append("Replicate: токен не задан (нет реального ИИ-звука)")
+            lines.append("Replicate: токен не задан")
         or_key = self.config.get("openrouter_key", "")
         if or_key:
             try:
                 req = urllib.request.Request("https://openrouter.ai/api/v1/models",
                                              headers={"Authorization": f"Bearer {or_key}"})
                 with urllib.request.urlopen(req, timeout=10) as r:
-                    lines.append("OpenRouter: жив" if r.status == 200 else f"OpenRouter: код {r.status}")
+                    lines.append("OpenRouter (тексты): ✅ жив" if r.status == 200 else f"OpenRouter: код {r.status}")
             except Exception as e:
                 lines.append(f"OpenRouter: не отвечает ({str(e)[:40]})")
+        else:
+            lines.append("OpenRouter: ключ не задан")
         hf = self.config.get("hf_token", "")
         if hf:
             try:
                 req = urllib.request.Request("https://huggingface.co/api/whoami-v2",
                                              headers={"Authorization": f"Bearer {hf}"})
                 with urllib.request.urlopen(req, timeout=10) as r:
-                    lines.append("HuggingFace: жив" if r.status == 200 else f"HuggingFace: код {r.status}")
+                    lines.append("HuggingFace (звук MusicGen): ✅ жив" if r.status == 200 else f"HuggingFace: код {r.status}")
             except Exception as e:
                 lines.append(f"HuggingFace: не отвечает ({str(e)[:40]})")
+        else:
+            lines.append("HuggingFace: токен не задан")
         fk = self.config.get("fish_key", "")
         if fk:
             try:
@@ -2921,39 +3059,21 @@ class LemusStudioApp(MDApp):
                     headers={"Authorization": f"Bearer {fk}", "Content-Type": "application/json"}, method="POST")
                 with urllib.request.urlopen(req, timeout=20) as r:
                     d = r.read()
-                    if _looks_like_audio(d):
-                        lines.append("Fish.audio: жив (TTS работает)")
-                    else:
-                        lines.append("Fish.audio: ответил не-аудио (проверь баланс)")
+                    lines.append("Fish.audio: ✅ жив" if _looks_like_audio(d) else "Fish.audio: ответил не-аудио")
             except urllib.error.HTTPError as e:
-                body = ""
-                try: body = e.read().decode()[:100]
-                except Exception: pass
-                if e.code == 401:
-                    lines.append("Fish.audio: 401 — ключ неверный")
-                elif e.code == 402:
-                    lines.append("Fish.audio: 402 — исчерпан баланс")
-                elif e.code == 404:
-                    lines.append("Fish.audio: 404 — эндпоинт изменён, используй /v1/tts POST")
+                if e.code == 402:
+                    lines.append("Fish.audio: ⚠ 402 — исчерпан баланс")
+                elif e.code == 401:
+                    lines.append("Fish.audio: ❌ 401 — ключ неверный")
                 else:
-                    lines.append(f"Fish.audio: HTTP {e.code} {body}")
+                    lines.append(f"Fish.audio: HTTP {e.code}")
             except Exception as e:
                 lines.append(f"Fish.audio: не отвечает ({str(e)[:40]})")
         else:
             lines.append("Fish.audio: ключ не задан")
         gk = self.config.get("groq_key", "")
         if gk:
-            try:
-                req = urllib.request.Request("https://api.groq.com/openai/v1/models",
-                                             headers={"Authorization": f"Bearer {gk}"})
-                with urllib.request.urlopen(req, timeout=10) as r:
-                    lines.append("Groq: жив" if r.status == 200 else f"Groq: код {r.status}")
-            except urllib.error.HTTPError as e:
-                lines.append(f"Groq: HTTP {e.code}")
-            except Exception as e:
-                lines.append(f"Groq: не отвечает ({str(e)[:40]})")
-        else:
-            lines.append("Groq: ключ не задан")
+            lines.append("Groq: не используется в генерации (игнорируется)")
         try:
             lines.append(f"Хранилище: {get_storage_root()}")
         except Exception:
@@ -3014,13 +3134,12 @@ class LemusStudioApp(MDApp):
     def _render_onboard_card(self):
         cards = [
             ("LEMUS AI MUSIC STUDIO", "Продюсерская станция с ИИ.\n\nРежимы: Сингл, Промпт, Хит, Альбом, Фон.\nКаждый трек: улучшенный промпт → план → звук → обложка → мастеринг."),
-            ("Качество звука", "Лучшее качество — Replicate MusicGen (токен в Настройках или keys.json).\nБез токена студия использует встроенный синтезатор-аранжировщик — честный запасной вариант."),
-            ("Улучшатель промптов", "Пиши черново — студия допишет.\n«Песня Олеси про Купер, мягкий drumm and base» →\n«Melodic drum and bass, женский вокал, тёплые пэды, 174 bpm, светлая грусть. Структура: интро, куплет, дроп-припев»."),
-            ("Структура как у Suno", "Gemini пишет текст с тегами [Verse], [Chorus], [Bridge].\nПлан секций управляет аранжировкой: куплет тише, припев полнее."),
+            ("Качество звука", "Студийный звук: Replicate MusicGen (нужна активация аккаунта).\nЗапасной: HuggingFace MusicGen.\nКрайний случай: встроенный аранжировщик с мастерингом."),
+            ("Модели Gemini", "Список моделей берётся прямо из API — автоматически подстраивается под доступные версии.\nМодели 2.5-flash больше нет — используем 2.0-flash и 1.5-flash."),
+            ("Улучшатель промптов", "Пиши черново — студия допишет.\n«Песня Олеси про Купер, мягкий drumm and base» →\n«Melodic drum and bass, женский вокал, тёплые пэды, 174 bpm»."),
             ("Встроенный плеер", "Мини-плеер с обложкой и перемоткой (жёлтая линия).\nКнопка загрузки сохраняет трек в Download."),
             ("Голос и ударения", "• Демоголос 10-30 сек → клон Fish.audio\n• Ударения через + (авто-очистка)\n• Клон копирует интонацию образца"),
             ("Форматы и дистрибуция", "• WAV 44.1/16 — мастер\n• MP3 320 всегда\n• FLAC / m4a при ffmpeg\n• ZIP-пакет с паспортом релиза"),
-            ("Активация и данные", "keys.json → вся мощь студии.\nПроекты переживают переустановку.\nПодсказки появляются при первом входе в каждый раздел."),
         ]
         card = cards[self.onboard_idx]
         is_last = self.onboard_idx == len(cards) - 1
@@ -3290,7 +3409,7 @@ class LemusStudioApp(MDApp):
     def _check_update_thread(self, silent):
         try:
             req = urllib.request.Request(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
-                headers={"User-Agent": "LemusStudio/6.5", "Accept": "application/vnd.github.v3+json"})
+                headers={"User-Agent": "LemusStudio/6.7", "Accept": "application/vnd.github.v3+json"})
             with urllib.request.urlopen(req, timeout=10) as r:
                 data = json.loads(r.read().decode())
                 remote = data.get("tag_name", "").lstrip("v")
