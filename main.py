@@ -11,7 +11,7 @@ def _log(msg):
     except Exception:
         pass
 
-_log("=== STARTUP v6.4.1 ===")
+_log("=== STARTUP v6.5.0 ===")
 
 try:
     import certifi, ssl
@@ -91,7 +91,7 @@ except Exception as e:
     _log(f"FAIL kivymd: {e}")
     raise
 
-CURRENT_VERSION = "6.4.1"
+CURRENT_VERSION = "6.5.0"
 CONFIG_FILE = "lemus_studio_config.json"
 PROJECTS_FILE = "lemus_projects_db.json"
 HISTORY_FILE = "lemus_prompts_history.json"
@@ -101,13 +101,9 @@ MASTER_HASH = hashlib.sha256(MASTER_KEYWORD.encode()).hexdigest()
 GITHUB_REPO = "antonlemus/lemus-ai-music-apk"
 REMOTE_KEYS_URL = "https://gist.githubusercontent.com/antonlemus/YOUR_GIST_ID/raw/keys.json"
 
-# ⭐ АКТУАЛЬНЫЕ МОДЕЛИ GEMINI (по диагностике от 27.09.2026)
 GEMINI_MODELS = [
-    "gemini-2.5-flash",
-    "gemini-2.5-pro",
-    "gemini-2.5-flash-preview-tts",
-    "gemini-2.5-pro-preview-tts",
-    "gemini-flash-latest",
+    "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash",
+    "gemini-2.0-flash-lite", "gemini-1.5-pro", "gemini-1.5-flash",
 ]
 
 REPLICATE_MUSIC_MODELS = [
@@ -1462,6 +1458,7 @@ class LemusStudioApp(MDApp):
             self.save_config_to_disk()
             toast(HINTS[hk])
 
+    # ===== УЛУЧШАТЕЛЬ ПРОМПТОВ =====
     def enhance_single(self):
         w = self.modes["single"].ids
         t = w.s_title_input.text.strip()
@@ -1499,7 +1496,7 @@ class LemusStudioApp(MDApp):
             print(f"enhance llm: {e}")
         return _local_enhance(raw)
 
-    # ===== GEMINI: АВТОПОИСК МОДЕЛЕЙ + ДВОЙНАЯ АВТОРИЗАЦИЯ =====
+    # ===== GEMINI: АВТОПОИСК МОДЕЛЕЙ + РОТАЦИЯ + РЕТПРАЙ 503 =====
     def _gemini_list_models(self, key):
         cached = self._gemini_cache.get(key)
         if cached is not None:
@@ -1548,13 +1545,13 @@ class LemusStudioApp(MDApp):
         return res["candidates"][0]["content"]["parts"][0]["text"]
 
     def _call_gemini_native(self, prompt, api_key, model=None):
-        # ⭐ Сначала пробуем список из API (актуальные модели проекта)
+        """Ретрай при 503 Service Unavailable (временная перегрузка Google)"""
         api_models = self._gemini_list_models(api_key) or []
-        # ⭐ Потом — обновлённый список GEMINI_MODELS (2.5-flash, 2.5-pro, flash-latest)
         models_to_try = api_models if api_models else list(GEMINI_MODELS)
         if model and model not in models_to_try:
             models_to_try = [model] + models_to_try
         last_err = None
+        retries_503 = 0
         for m in models_to_try[:6]:
             for auth in ("key", "bearer"):
                 try:
@@ -1562,6 +1559,12 @@ class LemusStudioApp(MDApp):
                     return self._clean_json(text)
                 except urllib.error.HTTPError as e:
                     last_err = e
+                    if e.code == 503:
+                        retries_503 += 1
+                        if retries_503 < 3:
+                            time.sleep(2 * retries_503)
+                            continue
+                        break
                     if e.code in (401, 403):
                         if auth == "key":
                             continue
@@ -1589,6 +1592,9 @@ class LemusStudioApp(MDApp):
                     try:
                         return self._gemini_post(prompt, key, m, auth, mime_json=False)
                     except urllib.error.HTTPError as e:
+                        if e.code == 503:
+                            time.sleep(1.5)
+                            continue
                         if e.code in (401, 403):
                             if auth == "key":
                                 continue
@@ -1666,6 +1672,7 @@ class LemusStudioApp(MDApp):
         except Exception as e:
             _log(f"доступ к файлам: {e}")
 
+    # ===== ХРАНИЛИЩЕ / ДАННЫЕ =====
     def get_data_path(self):
         path = os.path.join(get_storage_root(), ".data")
         try:
@@ -1744,6 +1751,7 @@ class LemusStudioApp(MDApp):
         except Exception:
             pass
 
+    # ===== ПЛЕЕР =====
     def _player_show(self):
         Animation(height=dp(68), d=0.22, t="out_quad").start(self.root.ids.player_bar)
 
@@ -1895,6 +1903,7 @@ class LemusStudioApp(MDApp):
         except Exception as e:
             toast(f"Ошибка сохранения: {str(e)[:40]}")
 
+    # ===== ГЕНЕРАЦИЯ =====
     def _build_plan_prompt(self, base_desc, genre, duration, vocals_hint=""):
         return (
             "Ты — профессиональный музыкальный продюсер уровня Suno/Udio.\n"
@@ -1995,7 +2004,7 @@ class LemusStudioApp(MDApp):
             Clock.schedule_once(lambda dt: self._update_progress(label, prog, "Улучшаю промпт...", 8), 0)
             enhanced = self._enhanced_cache.pop(mode, None) or self._enhance_sync(raw_desc)
             Clock.schedule_once(lambda dt: self._show_enhanced(mode, enhanced), 0)
-            Clock.schedule_once(lambda dt: self._update_progress(label, prog, "Gemini (gemini-2.5-flash) пишет план...", 15), 0)
+            Clock.schedule_once(lambda dt: self._update_progress(label, prog, "Gemini пишет план...", 15), 0)
             prompt = self._build_plan_prompt(enhanced, genre, duration)
             llm = self._producer_with_critic(prompt)
             plan = {
@@ -2199,11 +2208,12 @@ class LemusStudioApp(MDApp):
         self.modes["album"].ids.alb_status_label.text = "Gemini пишет трек..."
         threading.Thread(target=self._worker_add_track, args=(album, idea, dur)).start()
 
+    # ===== ИСТОЧНИКИ ЗВУКА / ИЗОБРАЖЕНИЯ =====
     def _generate_image(self, prompt):
         try:
             enc = urllib.parse.quote(prompt[:180])
             url = f"https://image.pollinations.ai/prompt/{enc}?width=3000&height=3000&nologo=true"
-            req = urllib.request.Request(url, headers={"User-Agent": "LemusStudio/6.4"})
+            req = urllib.request.Request(url, headers={"User-Agent": "LemusStudio/6.5"})
             with urllib.request.urlopen(req, timeout=60) as r:
                 d = r.read()
                 if len(d) > 5000:
@@ -2246,10 +2256,19 @@ class LemusStudioApp(MDApp):
                     if url:
                         with urllib.request.urlopen(
                                 urllib.request.Request(url,
-                                    headers={"User-Agent": "LemusStudio/6.4"}), timeout=120) as r3:
+                                    headers={"User-Agent": "LemusStudio/6.5"}), timeout=120) as r3:
                             d = r3.read()
                         if _looks_like_audio(d):
                             return d
+            except urllib.error.HTTPError as e:
+                body = ""
+                try: body = e.read().decode()[:200]
+                except Exception: pass
+                print(f"Replicate {m['owner_model']}: HTTP {e.code} {body}")
+                if e.code == 403 and "1010" in body:
+                    print("Replicate: аккаунт не активирован (нужна карта/trial)")
+                    return None
+                continue
             except Exception as e:
                 print(f"Replicate {m['owner_model']}: {str(e)[:80]}")
                 continue
@@ -2276,7 +2295,7 @@ class LemusStudioApp(MDApp):
         try:
             enc = urllib.parse.quote(prompt[:160])
             req = urllib.request.Request(f"https://audio.pollinations.ai/prompt/{enc}",
-                                          headers={"User-Agent": "LemusStudio/6.4"})
+                                          headers={"User-Agent": "LemusStudio/6.5"})
             with urllib.request.urlopen(req, timeout=60) as r:
                 dd = r.read()
                 if _looks_like_audio(dd):
@@ -2349,6 +2368,7 @@ class LemusStudioApp(MDApp):
         t = t.replace("+", "")
         return re.sub(r"[ \t]+", " ", t).strip()
 
+    # ===== LLM =====
     def _clean_json(self, text):
         t = text.strip()
         if t.startswith("```"):
@@ -2464,6 +2484,7 @@ class LemusStudioApp(MDApp):
             print(f"Fish: {e}")
             return None
 
+    # ===== МЕДИАТЕКА =====
     def toggle_selection_mode(self):
         self.selection_mode = not self.selection_mode
         self.selected_ids = set()
@@ -2666,6 +2687,7 @@ class LemusStudioApp(MDApp):
         except Exception as e:
             toast(f"Ошибка ZIP: {str(e)[:50]}")
 
+    # ===== КЛЮЧИ / АКТИВАЦИЯ =====
     def _import_keys_from_json(self, path):
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -2711,7 +2733,7 @@ class LemusStudioApp(MDApp):
     def _fetch_remote_keys_thread(self):
         try:
             req = urllib.request.Request(REMOTE_KEYS_URL,
-                headers={"User-Agent": "LemusStudio/6.4", "Accept": "application/json"})
+                headers={"User-Agent": "LemusStudio/6.5", "Accept": "application/json"})
             with urllib.request.urlopen(req, timeout=15) as r:
                 remote = json.loads(r.read().decode("utf-8"))
             for k, v in remote.items():
@@ -2801,16 +2823,17 @@ class LemusStudioApp(MDApp):
         else:
             toast("Ключи не настроены")
 
+    # ===== ДИАГНОСТИКА С ТОЧНЫМИ КОДАМИ =====
     def run_key_diagnostics(self):
         toast("Диагностика... (до 30 сек)")
         threading.Thread(target=self._diag_thread).start()
 
     def _diag_thread(self):
         from concurrent.futures import ThreadPoolExecutor
-        lines = ["Диагностика ключей v6.4.1 (актуальные модели 2.5-flash/2.5-pro):"]
+        lines = ["Диагностика ключей v6.5.0:"]
         try:
             req = urllib.request.Request("https://generativelanguage.googleapis.com/v1beta/models?key=invalid_test",
-                                         headers={"User-Agent": "LemusStudio/6.4"})
+                                         headers={"User-Agent": "LemusStudio/6.5"})
             try:
                 urllib.request.urlopen(req, timeout=10)
                 lines.append("Сеть и SSL: в порядке")
@@ -2860,9 +2883,14 @@ class LemusStudioApp(MDApp):
                     lines.append("Replicate (AI-звук): жив" if r.status == 200 else f"Replicate: код {r.status}")
             except urllib.error.HTTPError as e:
                 body = ""
-                try: body = e.read().decode()[:100]
+                try: body = e.read().decode()[:200]
                 except Exception: pass
-                lines.append(f"Replicate: HTTP {e.code} {body}")
+                if e.code == 403 and "1010" in body:
+                    lines.append("Replicate: 403/1010 — аккаунт не активирован. Нужна карта или trial на replicate.com/account/billing")
+                elif e.code == 401:
+                    lines.append("Replicate: 401 — токен неверный. Пересоздай на replicate.com/API tokens")
+                else:
+                    lines.append(f"Replicate: HTTP {e.code} {body}")
             except Exception as e:
                 lines.append(f"Replicate: не отвечает ({str(e)[:40]})")
         else:
@@ -2888,12 +2916,27 @@ class LemusStudioApp(MDApp):
         fk = self.config.get("fish_key", "")
         if fk:
             try:
-                req = urllib.request.Request("https://api.fish.audio/v1/models?pageSize=1",
-                                             headers={"Authorization": f"Bearer {fk}"})
-                with urllib.request.urlopen(req, timeout=10) as r:
-                    lines.append("Fish.audio: жив" if r.status == 200 else f"Fish.audio: код {r.status}")
+                payload = json.dumps({"text": "тест", "format": "mp3"}).encode()
+                req = urllib.request.Request("https://api.fish.audio/v1/tts", data=payload,
+                    headers={"Authorization": f"Bearer {fk}", "Content-Type": "application/json"}, method="POST")
+                with urllib.request.urlopen(req, timeout=20) as r:
+                    d = r.read()
+                    if _looks_like_audio(d):
+                        lines.append("Fish.audio: жив (TTS работает)")
+                    else:
+                        lines.append("Fish.audio: ответил не-аудио (проверь баланс)")
             except urllib.error.HTTPError as e:
-                lines.append(f"Fish.audio: HTTP {e.code}")
+                body = ""
+                try: body = e.read().decode()[:100]
+                except Exception: pass
+                if e.code == 401:
+                    lines.append("Fish.audio: 401 — ключ неверный")
+                elif e.code == 402:
+                    lines.append("Fish.audio: 402 — исчерпан баланс")
+                elif e.code == 404:
+                    lines.append("Fish.audio: 404 — эндпоинт изменён, используй /v1/tts POST")
+                else:
+                    lines.append(f"Fish.audio: HTTP {e.code} {body}")
             except Exception as e:
                 lines.append(f"Fish.audio: не отвечает ({str(e)[:40]})")
         else:
@@ -2927,6 +2970,7 @@ class LemusStudioApp(MDApp):
             buttons=[MDRaisedButton(text="Закрыть", on_release=lambda i: self.diag_dialog.dismiss())])
         self.diag_dialog.open()
 
+    # ===== ФАЙЛ-МЕНЕДЖЕР =====
     def open_file_manager(self, purpose="voice"):
         self.file_manager_purpose = purpose
         if platform == "android":
@@ -2962,6 +3006,7 @@ class LemusStudioApp(MDApp):
     def exit_file_manager(self, *args):
         self.file_manager.close()
 
+    # ===== ОНБОРДИНГ / ГАЙД / КАЛЬКУЛЯТОР / ИСТОРИЯ =====
     def show_onboarding(self):
         self.onboard_idx = 0
         self._render_onboard_card()
@@ -3117,6 +3162,7 @@ class LemusStudioApp(MDApp):
                      MDRaisedButton(text="Повторить последний", on_release=use_last)])
         dlg.open()
 
+    # ===== ЛОГИ =====
     def show_crash_log(self):
         parts = []
         for name in ["startup_debug.log", "crash.log"]:
@@ -3178,6 +3224,7 @@ class LemusStudioApp(MDApp):
                 toast(f"Ошибка отправки: {str(e)[:50]}")
         self._show_info("Логи", body[:1500])
 
+    # ===== YANDEX / УВЕДОМЛЕНИЯ / OTA =====
     def backup_to_yandex(self):
         token = self.config.get("yandex_token", "")
         if not token:
@@ -3243,7 +3290,7 @@ class LemusStudioApp(MDApp):
     def _check_update_thread(self, silent):
         try:
             req = urllib.request.Request(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
-                headers={"User-Agent": "LemusStudio/6.4", "Accept": "application/vnd.github.v3+json"})
+                headers={"User-Agent": "LemusStudio/6.5", "Accept": "application/vnd.github.v3+json"})
             with urllib.request.urlopen(req, timeout=10) as r:
                 data = json.loads(r.read().decode())
                 remote = data.get("tag_name", "").lstrip("v")
