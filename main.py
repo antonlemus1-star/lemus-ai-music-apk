@@ -11,7 +11,7 @@ def _log(msg):
     except Exception:
         pass
 
-_log("=== STARTUP v6.1.0 ===")
+_log("=== STARTUP v6.3.0 ===")
 
 try:
     import certifi, ssl
@@ -54,22 +54,19 @@ try:
     from kivymd.uix.list import (MDList, TwoLineAvatarIconListItem, IconLeftWidget,
                                  IconRightWidget, CheckboxLeftWidget)
     from kivymd.toast import toast
-    _HAS_SEP = True
     try:
         from kivymd.uix.divider import MDSeparator
     except ImportError:
         try:
             from kivymd.uix.separator import MDSeparator
         except ImportError:
-            _HAS_SEP = False
             class MDSeparator(MDBoxLayout):
                 def __init__(self, **kwargs):
                     kwargs.setdefault('size_hint_y', None)
                     kwargs.setdefault('height', '1dp')
-                    kwargs.setdefault('md_bg_color', [0.25, 0.24, 0.32, 1])
+                    kwargs.setdefault('md_bg_color', [0.26, 0.24, 0.36, 1])
                     super().__init__(**kwargs)
             Factory.register('MDSeparator', cls=MDSeparator)
-    _HAS_SW = True
     try:
         from kivymd.uix.switch import MDSwitch
     except ImportError:
@@ -79,7 +76,6 @@ try:
             try:
                 from kivymd.uix.selection import MDSwitch
             except ImportError:
-                _HAS_SW = False
                 from kivy.uix.togglebutton import ToggleButton
                 from kivy.properties import BooleanProperty
                 class MDSwitch(ToggleButton):
@@ -95,7 +91,7 @@ except Exception as e:
     _log(f"FAIL kivymd: {e}")
     raise
 
-CURRENT_VERSION = "6.1.0"
+CURRENT_VERSION = "6.3.0"
 CONFIG_FILE = "lemus_studio_config.json"
 PROJECTS_FILE = "lemus_projects_db.json"
 HISTORY_FILE = "lemus_prompts_history.json"
@@ -110,9 +106,23 @@ GEMINI_MODELS = [
     "gemini-2.0-flash-lite", "gemini-1.5-pro", "gemini-1.5-flash",
 ]
 
+# Replicate: музыкальные модели по порядку (нужен replicate_token)
+REPLICATE_MUSIC_MODELS = [
+    {"owner_model": "meta/musicgen",
+     "extra": {"model_version": "stereo-large", "output_format": "mp3",
+               "normalization_strategy": "peak"}},
+    {"owner_model": "meta/musicgen",
+     "extra": {"model_version": "melody-large", "output_format": "mp3",
+               "normalization_strategy": "peak"}},
+    {"owner_model": "meta/musicgen",
+     "extra": {"model_version": "large", "output_format": "mp3",
+               "normalization_strategy": "peak"}},
+]
+
 EMPTY_CONFIG = {
     "gemini_keys": [], "gemini_key": "", "gemini_model": "gemini-2.5-flash",
     "openrouter_key": "", "yandex_token": "", "hf_token": "", "fish_key": "", "groq_key": "",
+    "replicate_token": "",
     "is_master_activated": False, "activated_at": None, "activation_source": None,
     "disclose_ai": True, "hints_seen": {},
 }
@@ -120,7 +130,7 @@ EMPTY_CONFIG = {
 HINTS = {
     "tab_studio": "Студия: выбери режим чипсами сверху. Кнопка «Улучшить промпт» допишет идею до профессионального описания.",
     "tab_projects": "Медиатека: слушай, скачивай, отправляй и экспортируй готовые треки.",
-    "tab_settings": "Настройки: загрузи keys.json для полной мощности, диагностика покажет живые ключи.",
+    "tab_settings": "Настройки: ключи и Replicate-токен дают студийный звук. Диагностика покажет, что живо.",
     "mode_single": "Сингл: тема + жанр + длительность. Демоголос включает клон твоего голоса.",
     "mode_prompt": "Промпт: опиши трек словами или нажми «Улучшить промпт» — студия добавит жанр, BPM, настроение и структуру.",
     "mode_viral": "Хит: мемная фраза станет припевом короткого трека для Reels/TikTok.",
@@ -223,7 +233,7 @@ def get_storage_root():
     _STORAGE_ROOT = "."
     return _STORAGE_ROOT
 
-# ===== МУЗЫКАЛЬНАЯ ТЕОРИЯ =====
+# ===== МУЗЫКАЛЬНАЯ ТЕОРИЯ + СИНТЕЗАТОР С МАСТЕРИНГОМ (фолбэк) =====
 NOTE_SEMI = {"C": 0, "C#": 1, "Db": 1, "D": 2, "D#": 3, "Eb": 3, "E": 4, "F": 5,
              "F#": 6, "Gb": 6, "G": 7, "G#": 8, "Ab": 8, "A": 9, "A#": 10, "Bb": 10, "B": 11}
 SCALE_MINOR = [0, 2, 3, 5, 7, 8, 10]
@@ -431,7 +441,7 @@ KV = '''
 <SeekLine>:
     canvas:
         Color:
-            rgba: 0.22, 0.21, 0.28, 1
+            rgba: 0.26, 0.24, 0.36, 1
         Rectangle:
             pos: self.pos
             size: self.size
@@ -445,7 +455,7 @@ MDBoxLayout:
     orientation: "vertical"
     canvas.before:
         Color:
-            rgba: 0.066, 0.066, 0.09, 1
+            rgba: 0.066, 0.064, 0.10, 1
         Rectangle:
             pos: self.pos
             size: self.size
@@ -453,8 +463,8 @@ MDBoxLayout:
     MDTopAppBar:
         title: "Lemus AI Music Studio"
         elevation: 0
-        md_bg_color: 0.066, 0.066, 0.09, 1
-        specific_text_color: 0.95, 0.94, 0.98, 1
+        md_bg_color: 0.066, 0.064, 0.10, 1
+        specific_text_color: 0.97, 0.96, 1, 1
         right_action_items: [["shield-key-outline", lambda x: app.show_vault_status()], ["information-outline", lambda x: app.show_onboarding()]]
 
     MDBoxLayout:
@@ -462,7 +472,7 @@ MDBoxLayout:
         orientation: "vertical"
         size_hint_y: None
         height: "0dp"
-        md_bg_color: 0.115, 0.11, 0.165, 1
+        md_bg_color: 0.101, 0.098, 0.156, 1
         opacity: 0 if self.height == 0 else 1
         SeekLine:
             id: player_seek
@@ -487,19 +497,19 @@ MDBoxLayout:
                     text: ""
                     shorten: True
                     theme_text_color: "Custom"
-                    text_color: 0.95, 0.94, 0.98, 1
+                    text_color: 0.97, 0.96, 1, 1
                     font_style: "Subtitle2"
                 MDLabel:
                     id: player_artist
                     text: ""
                     shorten: True
                     theme_text_color: "Custom"
-                    text_color: 0.62, 0.60, 0.70, 1
+                    text_color: 0.60, 0.58, 0.70, 1
                     font_style: "Caption"
             MDIconButton:
                 icon: "skip-previous"
                 theme_text_color: "Custom"
-                text_color: 0.95, 0.94, 0.98, 1
+                text_color: 0.97, 0.96, 1, 1
                 on_release: app.player_prev()
             MDIconButton:
                 id: player_play_btn
@@ -510,7 +520,7 @@ MDBoxLayout:
             MDIconButton:
                 icon: "skip-next"
                 theme_text_color: "Custom"
-                text_color: 0.95, 0.94, 0.98, 1
+                text_color: 0.97, 0.96, 1, 1
                 on_release: app.player_next()
             MDIconButton:
                 icon: "download"
@@ -524,13 +534,13 @@ MDBoxLayout:
                 width: "42dp"
                 halign: "center"
                 theme_text_color: "Custom"
-                text_color: 0.62, 0.60, 0.70, 1
+                text_color: 0.60, 0.58, 0.70, 1
 
     MDBottomNavigation:
         id: bottom_nav
-        panel_color: 0.10, 0.095, 0.14, 1
+        panel_color: 0.101, 0.098, 0.156, 1
         text_color_active: 1.0, 0.85, 0.35, 1
-        text_color_normal: 0.52, 0.50, 0.60, 1
+        text_color_normal: 0.50, 0.48, 0.58, 1
 
         MDBottomNavigationItem:
             name: "tab_studio"
@@ -541,7 +551,7 @@ MDBoxLayout:
                 orientation: "vertical"
                 canvas.before:
                     Color:
-                        rgba: 0.066, 0.066, 0.09, 1
+                        rgba: 0.066, 0.064, 0.10, 1
                     Rectangle:
                         pos: self.pos
                         size: self.size
@@ -560,31 +570,37 @@ MDBoxLayout:
                             MDRaisedButton:
                                 id: chip_single
                                 text: "Сингл"
+                                elevation: 0
                                 md_bg_color: 0.42, 0.34, 0.78, 1
                                 on_release: app.switch_mode("single")
                             MDRaisedButton:
                                 id: chip_prompt
                                 text: "Промпт"
-                                md_bg_color: 0.22, 0.20, 0.32, 1
+                                elevation: 0
+                                md_bg_color: 0.145, 0.138, 0.196, 1
                                 on_release: app.switch_mode("prompt")
                             MDRaisedButton:
                                 id: chip_viral
                                 text: "Хит"
-                                md_bg_color: 0.22, 0.20, 0.32, 1
+                                elevation: 0
+                                md_bg_color: 0.145, 0.138, 0.196, 1
                                 on_release: app.switch_mode("viral")
                             MDRaisedButton:
                                 id: chip_album
                                 text: "Альбом"
-                                md_bg_color: 0.22, 0.20, 0.32, 1
+                                elevation: 0
+                                md_bg_color: 0.145, 0.138, 0.196, 1
                                 on_release: app.switch_mode("album")
                             MDRaisedButton:
                                 id: chip_money
                                 text: "Фон"
-                                md_bg_color: 0.22, 0.20, 0.32, 1
+                                elevation: 0
+                                md_bg_color: 0.145, 0.138, 0.196, 1
                                 on_release: app.switch_mode("money")
                             MDRaisedButton:
                                 id: chip_var
                                 text: "Вариация 2"
+                                elevation: 0
                                 md_bg_color: 0.48, 0.32, 0.22, 1
                                 on_release: app.make_variation()
 
@@ -607,7 +623,7 @@ MDBoxLayout:
                     mode: "rectangle"
                     size_hint_y: None
                     height: "48dp"
-                    line_color_normal: 0.30, 0.28, 0.42, 1
+                    line_color_normal: 0.26, 0.24, 0.36, 1
                     line_color_focus: 1.0, 0.85, 0.35, 1
                     on_text: app.filter_projects(self.text)
 
@@ -657,11 +673,13 @@ MDBoxLayout:
                     MDRaisedButton:
                         text: "Обновить"
                         size_hint_x: 1
-                        md_bg_color: 0.22, 0.20, 0.32, 1
+                        elevation: 0
+                        md_bg_color: 0.145, 0.138, 0.196, 1
                         on_release: app.refresh_projects_ui()
                     MDRaisedButton:
                         text: "Выбрать"
                         size_hint_x: 1
+                        elevation: 0
                         md_bg_color: 0.55, 0.40, 0.22, 1
                         on_release: app.toggle_selection_mode()
 
@@ -672,12 +690,14 @@ MDBoxLayout:
                     MDRaisedButton:
                         text: "Калькулятор"
                         size_hint_x: 1
-                        md_bg_color: 0.30, 0.50, 0.45, 1
+                        elevation: 0
+                        md_bg_color: 0.24, 0.50, 0.46, 1
                         on_release: app.show_revenue_calculator()
                     MDRaisedButton:
                         text: "Гайд"
                         size_hint_x: 1
-                        md_bg_color: 0.28, 0.45, 0.72, 1
+                        elevation: 0
+                        md_bg_color: 0.24, 0.42, 0.70, 1
                         on_release: app.show_monetize_guide()
 
                 MDBoxLayout:
@@ -694,6 +714,7 @@ MDBoxLayout:
                         text_color: 1, 0.85, 0.85, 1
                     MDRaisedButton:
                         text: "Удалить"
+                        elevation: 0
                         md_bg_color: 0.68, 0.24, 0.24, 1
                         on_release: app.delete_selected()
                     MDFlatButton:
@@ -722,11 +743,11 @@ MDBoxLayout:
                     MDCard:
                         orientation: "vertical"
                         padding: "16dp"
-                        radius: [20, 20, 20, 20]
-                        elevation: 3
+                        radius: [24, 24, 24, 24]
+                        elevation: 0
                         size_hint_y: None
-                        height: "300dp"
-                        md_bg_color: 0.115, 0.11, 0.165, 1
+                        height: "320dp"
+                        md_bg_color: 0.101, 0.098, 0.156, 1
                         MDBoxLayout:
                             orientation: "vertical"
                             spacing: "14dp"
@@ -734,44 +755,46 @@ MDBoxLayout:
                                 text: "Активация LemusAI"
                                 font_style: "H6"
                                 theme_text_color: "Custom"
-                                text_color: 0.95, 0.94, 0.98, 1
+                                text_color: 0.97, 0.96, 1, 1
                             MDRaisedButton:
                                 text: "Загрузить keys.json"
                                 size_hint_x: 1
-                                md_bg_color: 0.28, 0.45, 0.72, 1
+                                elevation: 0
+                                md_bg_color: 0.24, 0.42, 0.70, 1
                                 on_release: app.open_file_manager("keys")
                             MDLabel:
                                 text: "— или —"
                                 halign: "center"
                                 theme_text_color: "Custom"
-                                text_color: 0.62, 0.60, 0.70, 1
+                                text_color: 0.60, 0.58, 0.70, 1
                             MDTextField:
                                 id: master_password_input
                                 hint_text: "Пароль LemusAI (gist)"
                                 password: True
                                 mode: "rectangle"
-                                line_color_normal: 0.30, 0.28, 0.42, 1
+                                line_color_normal: 0.26, 0.24, 0.36, 1
                                 line_color_focus: 0.78, 0.46, 0.20, 1
                             MDRaisedButton:
                                 text: "Активировать через gist"
                                 size_hint_x: 1
+                                elevation: 0
                                 md_bg_color: 0.78, 0.46, 0.20, 1
                                 on_release: app.unlock_master_keys()
                             MDLabel:
                                 id: activation_status
                                 text: "Не активировано"
                                 theme_text_color: "Custom"
-                                text_color: 0.62, 0.60, 0.70, 1
+                                text_color: 0.60, 0.58, 0.70, 1
                                 halign: "center"
 
                     MDCard:
                         orientation: "vertical"
                         padding: "16dp"
-                        radius: [20, 20, 20, 20]
-                        elevation: 3
+                        radius: [24, 24, 24, 24]
+                        elevation: 0
                         size_hint_y: None
                         height: "170dp"
-                        md_bg_color: 0.115, 0.11, 0.165, 1
+                        md_bg_color: 0.101, 0.098, 0.156, 1
                         MDBoxLayout:
                             orientation: "vertical"
                             spacing: "12dp"
@@ -782,7 +805,7 @@ MDBoxLayout:
                                 MDLabel:
                                     text: "Указывать AI в релизах"
                                     theme_text_color: "Custom"
-                                    text_color: 0.82, 0.80, 0.92, 1
+                                    text_color: 0.84, 0.82, 0.94, 1
                                 MDSwitch:
                                     id: ai_disclose_switch
                                     active: True
@@ -794,90 +817,110 @@ MDBoxLayout:
                                 MDRaisedButton:
                                     text: "Диагностика"
                                     size_hint_x: 1
+                                    elevation: 0
                                     md_bg_color: 0.50, 0.32, 0.60, 1
                                     on_release: app.run_key_diagnostics()
                                 MDRaisedButton:
                                     text: "Резерв Yandex"
                                     size_hint_x: 1
+                                    elevation: 0
                                     md_bg_color: 0.68, 0.24, 0.24, 1
                                     on_release: app.backup_to_yandex()
                             MDRaisedButton:
                                 text: "Проверить обновления"
+                                elevation: 0
                                 md_bg_color: 0.28, 0.38, 0.60, 1
                                 on_release: app.check_for_updates()
 
                     MDCard:
                         orientation: "vertical"
                         padding: "16dp"
-                        radius: [20, 20, 20, 20]
-                        elevation: 3
+                        radius: [24, 24, 24, 24]
+                        elevation: 0
                         size_hint_y: None
-                        height: "150dp"
-                        md_bg_color: 0.115, 0.11, 0.165, 1
+                        height: "130dp"
+                        md_bg_color: 0.101, 0.098, 0.156, 1
                         MDBoxLayout:
                             orientation: "vertical"
                             spacing: "12dp"
                             MDRaisedButton:
                                 text: "Показать логи"
+                                elevation: 0
                                 md_bg_color: 0.48, 0.32, 0.22, 1
                                 on_release: app.show_crash_log()
                             MDRaisedButton:
                                 text: "Отправить логи"
-                                md_bg_color: 0.28, 0.45, 0.72, 1
+                                elevation: 0
+                                md_bg_color: 0.24, 0.42, 0.70, 1
                                 on_release: app.send_logs_to_me()
+
+                    MDLabel:
+                        text: "Настоящий ИИ-синтез (Replicate) — студийное качество"
+                        font_style: "Subtitle1"
+                        theme_text_color: "Custom"
+                        text_color: 0.84, 0.82, 0.94, 1
+
+                    MDTextField:
+                        id: cfg_replicate
+                        hint_text: "Replicate API Token (r8_...) — реальная генерация музыки"
+                        mode: "rectangle"
+                        line_color_normal: 0.26, 0.24, 0.36, 1
+                        line_color_focus: 0.60, 0.48, 0.96, 1
 
                     MDLabel:
                         text: "Свои API-ключи (гостевой режим)"
                         font_style: "Subtitle1"
                         theme_text_color: "Custom"
-                        text_color: 0.82, 0.80, 0.92, 1
+                        text_color: 0.84, 0.82, 0.94, 1
 
                     MDTextField:
                         id: cfg_gemini
                         hint_text: "Google Gemini (добавится к списку, не стирает его)"
                         mode: "rectangle"
-                        line_color_normal: 0.30, 0.28, 0.42, 1
-                        line_color_focus: 0.62, 0.5, 0.95, 1
+                        line_color_normal: 0.26, 0.24, 0.36, 1
+                        line_color_focus: 0.60, 0.48, 0.96, 1
                     MDTextField:
                         id: cfg_openrouter
                         hint_text: "OpenRouter Key"
                         mode: "rectangle"
-                        line_color_normal: 0.30, 0.28, 0.42, 1
-                        line_color_focus: 0.62, 0.5, 0.95, 1
+                        line_color_normal: 0.26, 0.24, 0.36, 1
+                        line_color_focus: 0.60, 0.48, 0.96, 1
                     MDTextField:
                         id: cfg_yandex
                         hint_text: "Yandex Disk Token"
                         mode: "rectangle"
-                        line_color_normal: 0.30, 0.28, 0.42, 1
-                        line_color_focus: 0.62, 0.5, 0.95, 1
+                        line_color_normal: 0.26, 0.24, 0.36, 1
+                        line_color_focus: 0.60, 0.48, 0.96, 1
                     MDTextField:
                         id: cfg_hf
                         hint_text: "Hugging Face Token"
                         mode: "rectangle"
-                        line_color_normal: 0.30, 0.28, 0.42, 1
-                        line_color_focus: 0.62, 0.5, 0.95, 1
+                        line_color_normal: 0.26, 0.24, 0.36, 1
+                        line_color_focus: 0.60, 0.48, 0.96, 1
                     MDTextField:
                         id: cfg_fish
                         hint_text: "Fish.audio Token"
                         mode: "rectangle"
-                        line_color_normal: 0.30, 0.28, 0.42, 1
-                        line_color_focus: 0.62, 0.5, 0.95, 1
+                        line_color_normal: 0.26, 0.24, 0.36, 1
+                        line_color_focus: 0.60, 0.48, 0.96, 1
                     MDTextField:
                         id: cfg_groq
                         hint_text: "Groq Whisper Token"
                         mode: "rectangle"
-                        line_color_normal: 0.30, 0.28, 0.42, 1
-                        line_color_focus: 0.62, 0.5, 0.95, 1
+                        line_color_normal: 0.26, 0.24, 0.36, 1
+                        line_color_focus: 0.60, 0.48, 0.96, 1
 
                     MDRaisedButton:
                         text: "Сохранить свои ключи"
                         size_hint_x: 1
-                        md_bg_color: 0.22, 0.42, 0.72, 1
+                        elevation: 0
+                        md_bg_color: 0.20, 0.38, 0.70, 1
                         on_release: app.save_user_settings()
 
                     MDRaisedButton:
                         text: "Сбросить все ключи"
                         size_hint_x: 1
+                        elevation: 0
                         md_bg_color: 0.68, 0.24, 0.24, 1
                         on_release: app.reset_all_keys()
 
@@ -885,7 +928,7 @@ MDBoxLayout:
                         id: version_label
                         text: ""
                         theme_text_color: "Custom"
-                        text_color: 0.52, 0.50, 0.60, 1
+                        text_color: 0.50, 0.48, 0.58, 1
                         font_style: "Caption"
                         halign: "center"
 '''
@@ -904,16 +947,16 @@ MDScrollView:
             font_style: "H5"
             bold: True
             theme_text_color: "Custom"
-            text_color: 0.95, 0.94, 0.98, 1
+            text_color: 0.97, 0.96, 1, 1
 
         MDCard:
             orientation: "vertical"
             padding: "16dp"
-            radius: [20, 20, 20, 20]
-            elevation: 3
+            radius: [24, 24, 24, 24]
+            elevation: 0
             size_hint_y: None
             height: "310dp"
-            md_bg_color: 0.115, 0.11, 0.165, 1
+            md_bg_color: 0.101, 0.098, 0.156, 1
             MDBoxLayout:
                 orientation: "vertical"
                 spacing: "14dp"
@@ -921,21 +964,21 @@ MDScrollView:
                     id: s_title_input
                     hint_text: "Тема / идея трека"
                     mode: "rectangle"
-                    line_color_normal: 0.30, 0.28, 0.42, 1
+                    line_color_normal: 0.26, 0.24, 0.36, 1
                     line_color_focus: 0.62, 0.5, 0.95, 1
                 MDTextField:
                     id: s_genre_input
                     hint_text: "Жанр (любой гибрид)"
                     text: "Pop"
                     mode: "rectangle"
-                    line_color_normal: 0.30, 0.28, 0.42, 1
+                    line_color_normal: 0.26, 0.24, 0.36, 1
                     line_color_focus: 0.62, 0.5, 0.95, 1
                 MDTextField:
                     id: s_duration_input
                     hint_text: "Длительность (сек)"
                     text: "90"
                     mode: "rectangle"
-                    line_color_normal: 0.30, 0.28, 0.42, 1
+                    line_color_normal: 0.26, 0.24, 0.36, 1
                     line_color_focus: 0.62, 0.5, 0.95, 1
                 MDBoxLayout:
                     spacing: "8dp"
@@ -943,33 +986,34 @@ MDScrollView:
                     height: "46dp"
                     MDRaisedButton:
                         text: "Демоголос"
+                        elevation: 0
                         md_bg_color: 0.30, 0.26, 0.48, 1
                         on_release: app.open_file_manager("voice")
                     MDIconButton:
                         icon: "close-circle-outline"
                         theme_text_color: "Custom"
-                        text_color: 0.62, 0.58, 0.78, 1
+                        text_color: 0.60, 0.56, 0.76, 1
                         on_release: app.clear_voice_sample()
                 MDLabel:
                     id: voice_sample_label
                     text: "Голос: не выбран"
                     theme_text_color: "Custom"
-                    text_color: 0.62, 0.60, 0.70, 1
+                    text_color: 0.60, 0.58, 0.70, 1
                     font_style: "Caption"
 
         MDCard:
             orientation: "vertical"
             padding: "12dp"
-            radius: [16, 16, 16, 16]
-            elevation: 1
+            radius: [18, 18, 18, 18]
+            elevation: 0
             size_hint_y: None
             height: "90dp"
-            md_bg_color: 0.10, 0.095, 0.15, 1
+            md_bg_color: 0.078, 0.076, 0.118, 1
             MDLabel:
                 id: s_enhanced_label
                 text: "Улучшенный промпт появится здесь"
                 theme_text_color: "Custom"
-                text_color: 0.62, 0.60, 0.70, 1
+                text_color: 0.60, 0.58, 0.70, 1
                 font_style: "Caption"
 
         MDBoxLayout:
@@ -979,33 +1023,36 @@ MDScrollView:
             MDRaisedButton:
                 text: "Улучшить промпт"
                 size_hint_x: 1
-                md_bg_color: 0.24, 0.58, 0.44, 1
+                elevation: 0
+                md_bg_color: 0.20, 0.56, 0.44, 1
                 on_release: app.enhance_single()
             MDRaisedButton:
                 text: "История"
                 size_hint_x: 1
-                md_bg_color: 0.22, 0.20, 0.32, 1
+                elevation: 0
+                md_bg_color: 0.145, 0.138, 0.196, 1
                 on_release: app.show_prompt_history()
 
         MDRaisedButton:
             text: "Сгенерировать сингл"
             size_hint_x: 1
+            elevation: 0
             md_bg_color: 0.42, 0.34, 0.78, 1
             on_release: app.start_single_generation()
 
         MDCard:
             orientation: "vertical"
             padding: "14dp"
-            radius: [20, 20, 20, 20]
-            elevation: 2
+            radius: [24, 24, 24, 24]
+            elevation: 0
             size_hint_y: None
             height: "130dp"
-            md_bg_color: 0.115, 0.11, 0.165, 1
+            md_bg_color: 0.101, 0.098, 0.156, 1
             MDLabel:
                 id: s_status_label
                 text: "Студия готова"
                 theme_text_color: "Custom"
-                text_color: 0.72, 0.70, 0.82, 1
+                text_color: 0.74, 0.72, 0.84, 1
             MDProgressBar:
                 id: s_progress
                 value: 0
@@ -1026,23 +1073,23 @@ MDScrollView:
             font_style: "H5"
             bold: True
             theme_text_color: "Custom"
-            text_color: 0.95, 0.94, 0.98, 1
+            text_color: 0.97, 0.96, 1, 1
 
         MDCard:
             orientation: "vertical"
             padding: "16dp"
-            radius: [20, 20, 20, 20]
-            elevation: 3
+            radius: [24, 24, 24, 24]
+            elevation: 0
             size_hint_y: None
             height: "300dp"
-            md_bg_color: 0.115, 0.11, 0.165, 1
+            md_bg_color: 0.101, 0.098, 0.156, 1
             MDBoxLayout:
                 orientation: "vertical"
                 spacing: "14dp"
                 MDLabel:
                     text: "Черновик идеи (можно коротко и с опечатками)"
                     theme_text_color: "Custom"
-                    text_color: 0.72, 0.70, 0.82, 1
+                    text_color: 0.74, 0.72, 0.84, 1
                 MDTextField:
                     id: p_prompt_input
                     hint_text: "Например: песня Олеси про работу бухгалтером, мягкий drum and bass с женским вокалом"
@@ -1050,56 +1097,58 @@ MDScrollView:
                     multiline: True
                     size_hint_y: None
                     height: "150dp"
-                    line_color_normal: 0.30, 0.28, 0.42, 1
+                    line_color_normal: 0.26, 0.24, 0.36, 1
                     line_color_focus: 0.4, 0.75, 0.6, 1
                 MDTextField:
                     id: p_duration_input
                     hint_text: "Длительность (сек)"
                     text: "120"
                     mode: "rectangle"
-                    line_color_normal: 0.30, 0.28, 0.42, 1
+                    line_color_normal: 0.26, 0.24, 0.36, 1
                     line_color_focus: 0.4, 0.75, 0.6, 1
 
         MDCard:
             orientation: "vertical"
             padding: "12dp"
-            radius: [16, 16, 16, 16]
-            elevation: 1
+            radius: [18, 18, 18, 18]
+            elevation: 0
             size_hint_y: None
             height: "110dp"
-            md_bg_color: 0.10, 0.095, 0.15, 1
+            md_bg_color: 0.078, 0.076, 0.118, 1
             MDLabel:
                 id: p_enhanced_label
                 text: "Улучшенный промпт появится здесь"
                 theme_text_color: "Custom"
-                text_color: 0.62, 0.60, 0.70, 1
+                text_color: 0.60, 0.58, 0.70, 1
                 font_style: "Caption"
 
         MDRaisedButton:
             text: "Улучшить промпт"
             size_hint_x: 1
-            md_bg_color: 0.24, 0.58, 0.44, 1
+            elevation: 0
+            md_bg_color: 0.20, 0.56, 0.44, 1
             on_release: app.enhance_prompt_mode()
 
         MDRaisedButton:
             text: "Создать трек по промпту"
             size_hint_x: 1
+            elevation: 0
             md_bg_color: 0.42, 0.34, 0.78, 1
             on_release: app.start_prompt_generation()
 
         MDCard:
             orientation: "vertical"
             padding: "14dp"
-            radius: [20, 20, 20, 20]
-            elevation: 2
+            radius: [24, 24, 24, 24]
+            elevation: 0
             size_hint_y: None
             height: "130dp"
-            md_bg_color: 0.115, 0.11, 0.165, 1
+            md_bg_color: 0.101, 0.098, 0.156, 1
             MDLabel:
                 id: p_status_label
                 text: "Опиши идею и нажми кнопку"
                 theme_text_color: "Custom"
-                text_color: 0.72, 0.70, 0.82, 1
+                text_color: 0.74, 0.72, 0.84, 1
             MDProgressBar:
                 id: p_progress
                 value: 0
@@ -1112,14 +1161,14 @@ MDScrollView:
             text: "Фоновый трек для стримингов (доход)"
             font_style: "Subtitle1"
             theme_text_color: "Custom"
-            text_color: 0.82, 0.80, 0.92, 1
+            text_color: 0.84, 0.82, 0.94, 1
 
         MDTextField:
             id: m_niche_input
             hint_text: "Ниша"
             text: "Lo-Fi Study Beats"
             mode: "rectangle"
-            line_color_normal: 0.30, 0.28, 0.42, 1
+            line_color_normal: 0.26, 0.24, 0.36, 1
             line_color_focus: 0.4, 0.75, 0.6, 1
 
         MDTextField:
@@ -1127,12 +1176,13 @@ MDScrollView:
             hint_text: "Хронометраж (сек)"
             text: "150"
             mode: "rectangle"
-            line_color_normal: 0.30, 0.28, 0.42, 1
+            line_color_normal: 0.26, 0.24, 0.36, 1
             line_color_focus: 0.4, 0.75, 0.6, 1
 
         MDRaisedButton:
             text: "Создать фоновый трек"
             size_hint_x: 1
+            elevation: 0
             md_bg_color: 0.30, 0.50, 0.45, 1
             on_release: app.start_money_generation()
 
@@ -1140,7 +1190,7 @@ MDScrollView:
             id: m_status_label
             text: ""
             theme_text_color: "Custom"
-            text_color: 0.62, 0.60, 0.70, 1
+            text_color: 0.60, 0.58, 0.70, 1
             font_style: "Caption"
 '''
 
@@ -1158,16 +1208,16 @@ MDScrollView:
             font_style: "H5"
             bold: True
             theme_text_color: "Custom"
-            text_color: 0.95, 0.94, 0.98, 1
+            text_color: 0.97, 0.96, 1, 1
 
         MDCard:
             orientation: "vertical"
             padding: "16dp"
-            radius: [20, 20, 20, 20]
-            elevation: 3
+            radius: [24, 24, 24, 24]
+            elevation: 0
             size_hint_y: None
             height: "260dp"
-            md_bg_color: 0.115, 0.11, 0.165, 1
+            md_bg_color: 0.101, 0.098, 0.156, 1
             MDBoxLayout:
                 orientation: "vertical"
                 spacing: "14dp"
@@ -1175,42 +1225,43 @@ MDScrollView:
                     id: v_hook_input
                     hint_text: "Мемная фраза / хук"
                     mode: "rectangle"
-                    line_color_normal: 0.30, 0.28, 0.42, 1
+                    line_color_normal: 0.26, 0.24, 0.36, 1
                     line_color_focus: 0.85, 0.5, 0.3, 1
                 MDTextField:
                     id: v_genre_input
                     hint_text: "Трендовый жанр"
                     text: "Drift Phonk"
                     mode: "rectangle"
-                    line_color_normal: 0.30, 0.28, 0.42, 1
+                    line_color_normal: 0.26, 0.24, 0.36, 1
                     line_color_focus: 0.85, 0.5, 0.3, 1
                 MDTextField:
                     id: v_duration_input
                     hint_text: "Время (15/30/45/60)"
                     text: "30"
                     mode: "rectangle"
-                    line_color_normal: 0.30, 0.28, 0.42, 1
+                    line_color_normal: 0.26, 0.24, 0.36, 1
                     line_color_focus: 0.85, 0.5, 0.3, 1
 
         MDRaisedButton:
             text: "Создать вирусный дроп"
             size_hint_x: 1
+            elevation: 0
             md_bg_color: 0.78, 0.46, 0.20, 1
             on_release: app.start_viral_generation()
 
         MDCard:
             orientation: "vertical"
             padding: "14dp"
-            radius: [20, 20, 20, 20]
-            elevation: 2
+            radius: [24, 24, 24, 24]
+            elevation: 0
             size_hint_y: None
             height: "130dp"
-            md_bg_color: 0.115, 0.11, 0.165, 1
+            md_bg_color: 0.101, 0.098, 0.156, 1
             MDLabel:
                 id: v_status_label
                 text: "Ожидание..."
                 theme_text_color: "Custom"
-                text_color: 0.72, 0.70, 0.82, 1
+                text_color: 0.74, 0.72, 0.84, 1
             MDProgressBar:
                 id: v_progress
                 value: 0
@@ -1231,16 +1282,16 @@ MDScrollView:
             font_style: "H5"
             bold: True
             theme_text_color: "Custom"
-            text_color: 0.95, 0.94, 0.98, 1
+            text_color: 0.97, 0.96, 1, 1
 
         MDCard:
             orientation: "vertical"
             padding: "16dp"
-            radius: [20, 20, 20, 20]
-            elevation: 3
+            radius: [24, 24, 24, 24]
+            elevation: 0
             size_hint_y: None
             height: "360dp"
-            md_bg_color: 0.115, 0.11, 0.165, 1
+            md_bg_color: 0.101, 0.098, 0.156, 1
             MDBoxLayout:
                 orientation: "vertical"
                 spacing: "14dp"
@@ -1248,34 +1299,34 @@ MDScrollView:
                     id: alb_theme_input
                     hint_text: "Концепция альбома"
                     mode: "rectangle"
-                    line_color_normal: 0.30, 0.28, 0.42, 1
+                    line_color_normal: 0.26, 0.24, 0.36, 1
                     line_color_focus: 0.62, 0.42, 0.9, 1
                 MDTextField:
                     id: alb_genre_input
                     hint_text: "Жанр"
                     text: "melodic drum and bass"
                     mode: "rectangle"
-                    line_color_normal: 0.30, 0.28, 0.42, 1
+                    line_color_normal: 0.26, 0.24, 0.36, 1
                     line_color_focus: 0.62, 0.42, 0.9, 1
                 MDTextField:
                     id: alb_count_input
                     hint_text: "Треков (3 или 4)"
                     text: "3"
                     mode: "rectangle"
-                    line_color_normal: 0.30, 0.28, 0.42, 1
+                    line_color_normal: 0.26, 0.24, 0.36, 1
                     line_color_focus: 0.62, 0.42, 0.9, 1
                 MDTextField:
                     id: alb_duration_input
                     hint_text: "Длительность трека (сек)"
                     text: "90"
                     mode: "rectangle"
-                    line_color_normal: 0.30, 0.28, 0.42, 1
+                    line_color_normal: 0.26, 0.24, 0.36, 1
                     line_color_focus: 0.62, 0.42, 0.9, 1
                 MDTextField:
                     id: alb_extra_idea
                     hint_text: "Идея дополнительного трека"
                     mode: "rectangle"
-                    line_color_normal: 0.30, 0.28, 0.42, 1
+                    line_color_normal: 0.26, 0.24, 0.36, 1
                     line_color_focus: 0.62, 0.42, 0.9, 1
 
         MDBoxLayout:
@@ -1285,27 +1336,29 @@ MDScrollView:
             MDRaisedButton:
                 text: "Свести EP"
                 size_hint_x: 1
+                elevation: 0
                 md_bg_color: 0.50, 0.32, 0.75, 1
                 on_release: app.start_album_generation()
             MDRaisedButton:
                 text: "Трек в альбом"
                 size_hint_x: 1
-                md_bg_color: 0.30, 0.55, 0.5, 1
+                elevation: 0
+                md_bg_color: 0.24, 0.50, 0.46, 1
                 on_release: app.show_add_track_dialog()
 
         MDCard:
             orientation: "vertical"
             padding: "14dp"
-            radius: [20, 20, 20, 20]
-            elevation: 2
+            radius: [24, 24, 24, 24]
+            elevation: 0
             size_hint_y: None
             height: "110dp"
-            md_bg_color: 0.115, 0.11, 0.165, 1
+            md_bg_color: 0.101, 0.098, 0.156, 1
             MDLabel:
                 id: alb_status_label
                 text: "Ожидание..."
                 theme_text_color: "Custom"
-                text_color: 0.72, 0.70, 0.82, 1
+                text_color: 0.74, 0.72, 0.84, 1
 '''
 
 
@@ -1386,13 +1439,13 @@ class LemusStudioApp(MDApp):
 
     def switch_mode(self, mode):
         self.current_mode = mode
-        colors = {"single": (0.42, 0.34, 0.78, 1), "prompt": (0.24, 0.58, 0.44, 1),
+        colors = {"single": (0.42, 0.34, 0.78, 1), "prompt": (0.20, 0.56, 0.44, 1),
                   "viral": (0.78, 0.46, 0.20, 1), "album": (0.50, 0.32, 0.75, 1),
-                  "money": (0.30, 0.50, 0.45, 1)}
+                  "money": (0.24, 0.50, 0.46, 1)}
         for m, chip_id in [("single", "chip_single"), ("prompt", "chip_prompt"),
                            ("viral", "chip_viral"), ("album", "chip_album"), ("money", "chip_money")]:
             chip = self.root.ids[chip_id]
-            chip.md_bg_color = colors[m] if m == mode else (0.22, 0.20, 0.32, 1)
+            chip.md_bg_color = colors[m] if m == mode else (0.145, 0.138, 0.196, 1)
         area = self.root.ids.studio_area
         area.clear_widgets()
         if mode in self.modes:
@@ -1799,7 +1852,7 @@ class LemusStudioApp(MDApp):
         self.add_to_history("Сингл", f"{t} / {g} / {d}с")
         w.s_status_label.text = "Улучшаю промпт и пишу план..."
         self._last_gen = {"genre": g, "duration": int(d), "rtype": "Сингл", "raw": raw, "mode": "single"}
-        threading.Thread(target=self._worker_track, args=(raw, t, g, int(d), "Сингл",
+        threading.Thread(target=self._worker_track, args=(raw, g, int(d), "Сингл",
             w.s_status_label, w.s_progress)).start()
 
     def start_prompt_generation(self):
@@ -1857,7 +1910,7 @@ class LemusStudioApp(MDApp):
         w.alb_status_label.text = "Gemini пишет концепцию EP..."
         threading.Thread(target=self._worker_album, args=(theme, genre, cnt, dur)).start()
 
-    def _worker_track(self, raw, title_idea, genre, dur, rtype, label, prog):
+    def _worker_track(self, raw, genre, dur, rtype, label, prog):
         demo = f"Голос: {os.path.basename(self.current_voice_sample)}." if self.current_voice_sample else "Нейро-вокал."
         full = f"{raw} {demo}"
         self._worker_generic(full, genre, dur, rtype, label, prog)
@@ -1891,9 +1944,11 @@ class LemusStudioApp(MDApp):
             cover = self._generate_image(llm.get("cover_prompt", f"{genre} cover"))
 
             Clock.schedule_once(lambda dt: self._update_progress(label, prog, f"Синтез звука ({duration}с)...", 55), 0)
-            audio, audio_src = self._generate_audio_chunk(music_prompt + " " + enhanced, duration, plan)
+            audio, audio_src = self._generate_audio_chunk(music_prompt + ". " + enhanced, duration, plan)
             if audio_src == "proc":
-                notes.append("звук синтезирован в студии")
+                notes.append("реальный ИИ-бэкенд недоступен — звук из локального синтезатора")
+            elif audio_src == "replicate":
+                notes.append("аудио сгенерировано MusicGen (Replicate) — студийное качество")
 
             if lyrics and self.current_voice_sample:
                 Clock.schedule_once(lambda dt: self._update_progress(label, prog, "Клонирование голоса...", 75), 0)
@@ -1923,6 +1978,7 @@ class LemusStudioApp(MDApp):
                 "lyrics_tts": self._prepare_lyrics_for_tts(lyrics),
                 "bpm": plan.get("bpm"), "key": plan.get("key"),
                 "enhanced_prompt": enhanced,
+                "audio_source": audio_src,
                 "critic_total": total, "critic_verdict": verdict,
                 "ai_disclose": bool(self.config.get("disclose_ai", True)),
                 "date": time.strftime("%Y-%m-%d %H:%M"),
@@ -1988,6 +2044,7 @@ class LemusStudioApp(MDApp):
                     "cover_path": cover_p if cover else None,
                     "album_id": album_id, "album_title": album,
                     "lyrics": t.get("lyrics", ""),
+                    "audio_source": src,
                     "ai_disclose": bool(self.config.get("disclose_ai", True)),
                     "date": time.strftime("%Y-%m-%d %H:%M"),
                 })
@@ -2026,6 +2083,7 @@ class LemusStudioApp(MDApp):
                 "mp3_path": mp3_p, "wav_path": wav_p,
                 "cover_path": album.get("cover_path"),
                 "lyrics": llm.get("lyrics", ""),
+                "audio_source": src,
                 "ai_disclose": bool(self.config.get("disclose_ai", True)),
                 "date": time.strftime("%Y-%m-%d %H:%M"),
             })
@@ -2073,7 +2131,7 @@ class LemusStudioApp(MDApp):
         try:
             enc = urllib.parse.quote(prompt[:180])
             url = f"https://image.pollinations.ai/prompt/{enc}?width=3000&height=3000&nologo=true"
-            req = urllib.request.Request(url, headers={"User-Agent": "LemusStudio/6.1"})
+            req = urllib.request.Request(url, headers={"User-Agent": "LemusStudio/6.3"})
             with urllib.request.urlopen(req, timeout=60) as r:
                 d = r.read()
                 if len(d) > 5000:
@@ -2082,7 +2140,53 @@ class LemusStudioApp(MDApp):
             print(f"Обложка: {e}")
         return None
 
+    def _generate_audio_replicate(self, prompt, duration):
+        token = (self.config.get("replicate_token") or "").strip()
+        if not token:
+            return None
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json",
+                   "Prefer": "wait=60"}
+        dur = max(5, min(int(duration or 30), 120))
+        for m in REPLICATE_MUSIC_MODELS:
+            try:
+                inp = {"prompt": prompt[:800], "duration": dur}
+                inp.update(m.get("extra", {}))
+                payload = json.dumps({"input": inp}).encode()
+                req = urllib.request.Request(
+                    f"https://api.replicate.com/v1/models/{m['owner_model']}/predictions",
+                    data=payload, headers=headers, method="POST")
+                with urllib.request.urlopen(req, timeout=70) as r:
+                    pred = json.loads(r.read().decode())
+                status = pred.get("status")
+                out = pred.get("output")
+                get_url = (pred.get("urls") or {}).get("get")
+                waited = 0
+                while status not in ("succeeded", "failed", "canceled") and get_url and waited < 300:
+                    time.sleep(5)
+                    waited += 5
+                    with urllib.request.urlopen(
+                            urllib.request.Request(get_url, headers=headers), timeout=20) as r2:
+                        pred = json.loads(r2.read().decode())
+                    status = pred.get("status")
+                    out = pred.get("output")
+                if status == "succeeded" and out:
+                    url = out if isinstance(out, str) else (out[-1] if isinstance(out, list) else None)
+                    if url:
+                        with urllib.request.urlopen(
+                                urllib.request.Request(url,
+                                    headers={"User-Agent": "LemusStudio/6.3"}), timeout=120) as r3:
+                            d = r3.read()
+                        if _looks_like_audio(d):
+                            return d
+            except Exception as e:
+                print(f"Replicate {m['owner_model']}: {str(e)[:80]}")
+                continue
+        return None
+
     def _generate_audio_chunk(self, prompt, duration, plan=None):
+        d = self._generate_audio_replicate(prompt, duration)
+        if d:
+            return d, "replicate"
         hf = self.config.get("hf_token")
         if hf:
             for url in ["https://router.huggingface.co/hf-inference/models/facebook/musicgen-small",
@@ -2092,19 +2196,19 @@ class LemusStudioApp(MDApp):
                     payload = json.dumps({"inputs": prompt[:160], "parameters": {"duration": min(duration, 30)}}).encode()
                     req = urllib.request.Request(url, data=payload, headers=headers)
                     with urllib.request.urlopen(req, timeout=90) as r:
-                        d = r.read()
-                        if _looks_like_audio(d):
-                            return d, "hf"
+                        dd = r.read()
+                        if _looks_like_audio(dd):
+                            return dd, "hf"
                 except Exception as e:
                     print(f"HF: {e}")
         try:
             enc = urllib.parse.quote(prompt[:160])
             req = urllib.request.Request(f"https://audio.pollinations.ai/prompt/{enc}",
-                                          headers={"User-Agent": "LemusStudio/6.1"})
+                                          headers={"User-Agent": "LemusStudio/6.3"})
             with urllib.request.urlopen(req, timeout=60) as r:
-                d = r.read()
-                if _looks_like_audio(d):
-                    return d, "poll"
+                dd = r.read()
+                if _looks_like_audio(dd):
+                    return dd, "poll"
         except Exception as e:
             print(f"Poll: {e}")
         return _procedural_track(duration, prompt, plan), "proc"
@@ -2353,6 +2457,8 @@ class LemusStudioApp(MDApp):
             extra = f" • {item.get('date','')}"
             if item.get("bpm"):
                 extra += f" • {item.get('bpm')} BPM"
+            if item.get("audio_source") == "replicate":
+                extra += " • AI-звук"
             li = TwoLineAvatarIconListItem(text=title,
                 secondary_text=f"{genre} • {itype}{extra}")
             if self.selection_mode:
@@ -2517,11 +2623,12 @@ class LemusStudioApp(MDApp):
             if not isinstance(data, dict):
                 toast("Неверный формат JSON")
                 return
-            if not any(k in data for k in ["gemini_keys", "openrouter_key"]):
+            if not any(k in data for k in ["gemini_keys", "openrouter_key", "replicate_token"]):
                 toast("В JSON нет нужных ключей")
                 return
             for key in ["gemini_keys", "gemini_key", "gemini_model", "openrouter_key",
-                        "yandex_token", "hf_token", "fish_key", "groq_key", "disclose_ai"]:
+                        "yandex_token", "hf_token", "fish_key", "groq_key", "disclose_ai",
+                        "replicate_token"]:
                 if key in data:
                     self.config[key] = data[key]
             keys = self.config.get("gemini_keys", [])
@@ -2537,7 +2644,7 @@ class LemusStudioApp(MDApp):
             self.populate_settings_fields()
             self.update_activation_status()
             n = len(self.config.get("gemini_keys", []))
-            toast(f"Ключи загружены! Gemini: {n}")
+            toast(f"Ключи загружены! Gemini: {n}, Replicate: {'да' if self.config.get('replicate_token') else 'нет'}")
         except json.JSONDecodeError:
             toast("Ошибка разбора JSON")
         except Exception as e:
@@ -2554,7 +2661,7 @@ class LemusStudioApp(MDApp):
     def _fetch_remote_keys_thread(self):
         try:
             req = urllib.request.Request(REMOTE_KEYS_URL,
-                headers={"User-Agent": "LemusStudio/6.1", "Accept": "application/json"})
+                headers={"User-Agent": "LemusStudio/6.3", "Accept": "application/json"})
             with urllib.request.urlopen(req, timeout=15) as r:
                 remote = json.loads(r.read().decode("utf-8"))
             for k, v in remote.items():
@@ -2594,7 +2701,7 @@ class LemusStudioApp(MDApp):
             label.text = f"LemusAI активен\n({self.config.get('activation_source','?')}, {self.config.get('activated_at','')})"
             label.theme_text_color = "Custom"
             label.text_color = (0.35, 0.85, 0.45, 1)
-        elif self.config.get("gemini_key") or self.config.get("openrouter_key"):
+        elif self.config.get("gemini_key") or self.config.get("openrouter_key") or self.config.get("replicate_token"):
             label.text = "Гостевой режим (свои ключи)"
             label.theme_text_color = "Custom"
             label.text_color = (0.9, 0.75, 0.3, 1)
@@ -2616,6 +2723,7 @@ class LemusStudioApp(MDApp):
         else:
             self.config["gemini_key"] = ""
         self.config["gemini_keys"] = keys
+        self.config["replicate_token"] = r.ids.cfg_replicate.text.strip() or self.config.get("replicate_token", "")
         self.config["openrouter_key"] = r.ids.cfg_openrouter.text.strip() or self.config.get("openrouter_key", "")
         self.config["yandex_token"] = r.ids.cfg_yandex.text.strip() or self.config.get("yandex_token", "")
         self.config["hf_token"] = r.ids.cfg_hf.text.strip() or self.config.get("hf_token", "")
@@ -2623,7 +2731,7 @@ class LemusStudioApp(MDApp):
         self.config["groq_key"] = r.ids.cfg_groq.text.strip() or self.config.get("groq_key", "")
         self.save_config_to_disk()
         self.update_activation_status()
-        toast(f"Сохранено! Gemini в списке: {len(keys)}")
+        toast(f"Сохранено! Gemini: {len(keys)}, Replicate: {'да' if self.config.get('replicate_token') else 'нет'}")
 
     def populate_settings_fields(self):
         r = self.root
@@ -2633,11 +2741,12 @@ class LemusStudioApp(MDApp):
         r.ids.cfg_hf.text = self.config.get("hf_token", "")
         r.ids.cfg_fish.text = self.config.get("fish_key", "")
         r.ids.cfg_groq.text = self.config.get("groq_key", "")
+        r.ids.cfg_replicate.text = self.config.get("replicate_token", "")
 
     def show_vault_status(self):
         if self.config.get("is_master_activated"):
-            toast(f"LemusAI: Gemini {len(self.config.get('gemini_keys', []))}")
-        elif self.config.get("gemini_key") or self.config.get("openrouter_key"):
+            toast(f"LemusAI: Gemini {len(self.config.get('gemini_keys', []))}, Replicate {'есть' if self.config.get('replicate_token') else 'нет'}")
+        elif self.config.get("gemini_key") or self.config.get("openrouter_key") or self.config.get("replicate_token"):
             toast("Гостевой режим")
         else:
             toast("Ключи не настроены")
@@ -2651,7 +2760,7 @@ class LemusStudioApp(MDApp):
         lines = ["Диагностика ключей:"]
         try:
             req = urllib.request.Request("https://generativelanguage.googleapis.com/v1beta/models?key=invalid_test",
-                                         headers={"User-Agent": "LemusStudio/6.1"})
+                                         headers={"User-Agent": "LemusStudio/6.3"})
             try:
                 urllib.request.urlopen(req, timeout=10)
                 lines.append("Сеть и SSL: в порядке")
@@ -2683,6 +2792,17 @@ class LemusStudioApp(MDApp):
             else:
                 lines.append(f"Gemini #{i+1} {k[:8]}...: не отвечает")
         lines.append(f"Итого живых Gemini: {alive}/{len(g_keys)}")
+        rep = self.config.get("replicate_token", "")
+        if rep:
+            try:
+                req = urllib.request.Request("https://api.replicate.com/v1/account",
+                                             headers={"Authorization": f"Bearer {rep}"})
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    lines.append("Replicate (AI-звук): жив" if r.status == 200 else f"Replicate: код {r.status}")
+            except Exception as e:
+                lines.append(f"Replicate: не отвечает ({str(e)[:40]})")
+        else:
+            lines.append("Replicate: токен не задан (нет реального ИИ-звука)")
         or_key = self.config.get("openrouter_key", "")
         if or_key:
             try:
@@ -2763,6 +2883,7 @@ class LemusStudioApp(MDApp):
     def _render_onboard_card(self):
         cards = [
             ("LEMUS AI MUSIC STUDIO", "Продюсерская станция с ИИ.\n\nРежимы: Сингл, Промпт, Хит, Альбом, Фон.\nКаждый трек: улучшенный промпт → план → звук → обложка → мастеринг."),
+            ("Качество звука", "Лучшее качество — Replicate MusicGen (токен в Настройках или keys.json).\nБез токена студия использует встроенный синтезатор-аранжировщик — честный запасной вариант."),
             ("Улучшатель промптов", "Пиши черново — студия допишет.\n«Песня Олеси про Купер, мягкий drumm and base» →\n«Melodic drum and bass, женский вокал, тёплые пэды, 174 bpm, светлая грусть. Структура: интро, куплет, дроп-припев»."),
             ("Структура как у Suno", "Gemini пишет текст с тегами [Verse], [Chorus], [Bridge].\nПлан секций управляет аранжировкой: куплет тише, припев полнее."),
             ("Встроенный плеер", "Мини-плеер с обложкой и перемоткой (жёлтая линия).\nКнопка загрузки сохраняет трек в Download."),
@@ -3038,7 +3159,7 @@ class LemusStudioApp(MDApp):
     def _check_update_thread(self, silent):
         try:
             req = urllib.request.Request(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
-                headers={"User-Agent": "LemusStudio/6.1", "Accept": "application/vnd.github.v3+json"})
+                headers={"User-Agent": "LemusStudio/6.3", "Accept": "application/vnd.github.v3+json"})
             with urllib.request.urlopen(req, timeout=10) as r:
                 data = json.loads(r.read().decode())
                 remote = data.get("tag_name", "").lstrip("v")
