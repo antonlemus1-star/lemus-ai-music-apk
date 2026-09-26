@@ -11,7 +11,7 @@ def _log(msg):
     except Exception:
         pass
 
-_log("=== STARTUP v6.0.0 ===")
+_log("=== STARTUP v6.1.0 ===")
 
 try:
     import certifi, ssl
@@ -32,6 +32,7 @@ try:
     from kivy.uix.widget import Widget
     from kivy.uix.image import Image
     from kivy.properties import NumericProperty
+    from kivy.factory import Factory
     _log("OK kivy")
 except Exception as e:
     _log(f"FAIL kivy: {e}")
@@ -53,18 +54,22 @@ try:
     from kivymd.uix.list import (MDList, TwoLineAvatarIconListItem, IconLeftWidget,
                                  IconRightWidget, CheckboxLeftWidget)
     from kivymd.toast import toast
+    _HAS_SEP = True
     try:
         from kivymd.uix.divider import MDSeparator
     except ImportError:
         try:
             from kivymd.uix.separator import MDSeparator
         except ImportError:
+            _HAS_SEP = False
             class MDSeparator(MDBoxLayout):
                 def __init__(self, **kwargs):
                     kwargs.setdefault('size_hint_y', None)
                     kwargs.setdefault('height', '1dp')
                     kwargs.setdefault('md_bg_color', [0.25, 0.24, 0.32, 1])
                     super().__init__(**kwargs)
+            Factory.register('MDSeparator', cls=MDSeparator)
+    _HAS_SW = True
     try:
         from kivymd.uix.switch import MDSwitch
     except ImportError:
@@ -74,6 +79,7 @@ try:
             try:
                 from kivymd.uix.selection import MDSwitch
             except ImportError:
+                _HAS_SW = False
                 from kivy.uix.togglebutton import ToggleButton
                 from kivy.properties import BooleanProperty
                 class MDSwitch(ToggleButton):
@@ -83,12 +89,13 @@ try:
                         self.bind(state=self._on_state)
                     def _on_state(self, instance, value):
                         self.active = (value == 'down')
+                Factory.register('MDSwitch', cls=MDSwitch)
     _log("OK kivymd")
 except Exception as e:
     _log(f"FAIL kivymd: {e}")
     raise
 
-CURRENT_VERSION = "6.0.0"
+CURRENT_VERSION = "6.1.0"
 CONFIG_FILE = "lemus_studio_config.json"
 PROJECTS_FILE = "lemus_projects_db.json"
 HISTORY_FILE = "lemus_prompts_history.json"
@@ -97,7 +104,6 @@ MASTER_KEYWORD = "LemusAI"
 MASTER_HASH = hashlib.sha256(MASTER_KEYWORD.encode()).hexdigest()
 GITHUB_REPO = "antonlemus/lemus-ai-music-apk"
 REMOTE_KEYS_URL = "https://gist.githubusercontent.com/antonlemus/YOUR_GIST_ID/raw/keys.json"
-ACCENT = (1.0, 0.85, 0.35, 1)
 
 GEMINI_MODELS = [
     "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash",
@@ -112,15 +118,70 @@ EMPTY_CONFIG = {
 }
 
 HINTS = {
-    "tab_studio": "Студия: выбери режим чипсами сверху, опиши идею — Gemini напишет текст, музыку и обложку.",
+    "tab_studio": "Студия: выбери режим чипсами сверху. Кнопка «Улучшить промпт» допишет идею до профессионального описания.",
     "tab_projects": "Медиатека: слушай, скачивай, отправляй и экспортируй готовые треки.",
     "tab_settings": "Настройки: загрузи keys.json для полной мощности, диагностика покажет живые ключи.",
     "mode_single": "Сингл: тема + жанр + длительность. Демоголос включает клон твоего голоса.",
-    "mode_prompt": "Промпт: опиши трек словами — стиль, настроение, инструменты. Чем детальнее, тем лучше.",
+    "mode_prompt": "Промпт: опиши трек словами или нажми «Улучшить промпт» — студия добавит жанр, BPM, настроение и структуру.",
     "mode_viral": "Хит: мемная фраза станет припевом короткого трека для Reels/TikTok.",
     "mode_album": "Альбом: концепция + жанр → 3-4 трека в едином стиле. Позже добавляй треки.",
     "mode_money": "Фон: ниша для стримингов → монетизируемый фоновый трек.",
 }
+
+# ===== УЛУЧШАТЕЛЬ ПРОМПТОВ: локальный фолбэк =====
+TYPO_MAP = [
+    ("drumm and base", "drum and bass"), ("drum and base", "drum and bass"),
+    ("drumm-n-base", "drum and bass"), ("драм-н-бэйс", "drum and bass"),
+    ("drum'n'bass", "drum and bass"), ("медодичный", "мелодичный"),
+    ("мелодичный", "мелодичный"), ("лоу-фай", "lo-fi"), ("лоуфай", "lo-fi"),
+    ("фонк", "phonk"), ("хаус", "house"), ("техно", "techno"),
+]
+GENRE_BPM = [
+    (("drum and bass", "dnb"), 174, "melodic drum and bass", "тёплые пэды, роллинг-бас, брейкбит"),
+    (("phonk",), 132, "drift phonk", "ковбелл-мелодия, 808-бас, тёмный вайб"),
+    (("lo-fi",), 82, "lo-fi chill", "виниловый шум, родес-пиано, мягкий бит"),
+    (("house",), 124, "deep house", "грув-бас, мягкие клавиши, четырёхдольный бит"),
+    (("trap", "rap", "рэп", "hip-hop"), 140, "trap rap", "808-бас, хэты с трещоткой, мрачные синты"),
+    (("ballad", "баллад"), 72, "pop ballad", "фортепиано, струнные, живой бас"),
+    (("techno",), 128, "techno", "индустриальные синты, жёсткий бит"),
+    (("pop", "поп"), 100, "modern pop", "чистый продакшн, синтезаторные пэды, живой бас"),
+]
+
+def _local_enhance(raw):
+    t = (raw or "").lower()
+    for a, b in TYPO_MAP:
+        t = t.replace(a, b)
+    bpm, genre, instr = 100, "modern pop", "тёплые пэды, мягкие ударные, глубокий бас"
+    for keys, b_, g_, i_ in GENRE_BPM:
+        if any(k in t for k in keys):
+            bpm, genre, instr = b_, g_, i_
+            break
+    if any(w in t for w in ("female", "женск")):
+        vocals = "женский вокал"
+    elif any(w in t for w in ("male", "мужск")):
+        vocals = "мужской вокал"
+    else:
+        vocals = ""
+    if any(w in t for w in ("мягк", "soft", "груст", "sad", "лирич", "нежн")):
+        mood = "настроение светлой грусти"
+    elif any(w in t for w in ("энергич", "агрессив", "драйв", "energy")):
+        mood = "энергичное и драйвовое настроение"
+    else:
+        mood = "тёплое обволакивающее настроение"
+    parts = [genre]
+    if vocals:
+        parts.append(vocals)
+    parts += [instr, f"{bpm} bpm", mood]
+    head = ", ".join(parts).capitalize()
+    return (f"{head}. Структура: короткое интро, длинный куплет, мощный дроп-припев, "
+            f"бридж, финальный припев с фейдом.")
+
+ENHANCE_SYSTEM = (
+    "Ты — промпт-инженер музыкальных нейросетей уровня Suno/Udio. "
+    "Пользователь даёт черновую идею. Ты возвращаешь ОДНУ строку готового промпта на русском: "
+    "жанр и поджанр, вокал, инструменты, темп в bpm, тональность, настроение, "
+    "структура (интро/куплет/припев/бридж/аутро). Без JSON, без пояснений."
+)
 
 _STORAGE_ROOT = None
 
@@ -162,13 +223,13 @@ def get_storage_root():
     _STORAGE_ROOT = "."
     return _STORAGE_ROOT
 
-# ===== МУЗЫКАЛЬНАЯ ТЕОРИЯ (как в про-студиях) =====
+# ===== МУЗЫКАЛЬНАЯ ТЕОРИЯ =====
 NOTE_SEMI = {"C": 0, "C#": 1, "Db": 1, "D": 2, "D#": 3, "Eb": 3, "E": 4, "F": 5,
              "F#": 6, "Gb": 6, "G": 7, "G#": 8, "Ab": 8, "A": 9, "A#": 10, "Bb": 10, "B": 11}
 SCALE_MINOR = [0, 2, 3, 5, 7, 8, 10]
 SCALE_MAJOR = [0, 2, 4, 5, 7, 9, 11]
-PROG_MINOR = [0, 5, 2, 6]   # i - VI - III - VII
-PROG_MAJOR = [0, 5, 3, 4]   # I - vi - IV - V
+PROG_MINOR = [0, 5, 2, 6]
+PROG_MAJOR = [0, 5, 3, 4]
 
 def _parse_key(key_str):
     s = (key_str or "").strip()
@@ -197,7 +258,6 @@ def _section_energy(name):
     if "outro" in n or "финал" in n or "концов" in n: return 0.35
     return 0.60
 
-# ===== ПРОЦЕДУРНЫЙ ДВИЖОК С МАСТЕРИНГОМ =====
 def _procedural_track(duration, seed_text, plan=None):
     import random
     plan = plan or {}
@@ -297,7 +357,6 @@ def _procedural_track(duration, seed_text, plan=None):
             for k in (0, 3, 5):
                 f, ln = motif[k]
                 add_tone(s0 + k * beat / 2, beat / 2 * ln * 1.5, f / 2.0, 0.07, 0.985, 0.4, vib=1)
-    # ===== МАСТЕРИНГ =====
     mean = sum(buf) / max(1, n)
     for i in range(n):
         buf[i] -= mean
@@ -339,7 +398,6 @@ def _looks_like_audio(d):
     return (d[:3] == b"ID3" or d[:2] in (b"\xff\xfb", b"\xff\xf3") or
             d[:4] in (b"RIFF", b"OggS", b"fLaC"))
 
-# ===== ЛИНИЯ ПЕРЕМОТКИ (как в Яндекс Музыке) =====
 class SeekLine(Widget):
     value = NumericProperty(0.0)
     _drag = False
@@ -366,6 +424,8 @@ class SeekLine(Widget):
     def _apply(self, touch):
         ratio = (touch.x - self.x) / max(1.0, self.width)
         self.value = max(0.0, min(1.0, ratio))
+
+Factory.register('SeekLine', cls=SeekLine)
 
 KV = '''
 <SeekLine>:
@@ -397,7 +457,6 @@ MDBoxLayout:
         specific_text_color: 0.95, 0.94, 0.98, 1
         right_action_items: [["shield-key-outline", lambda x: app.show_vault_status()], ["information-outline", lambda x: app.show_onboarding()]]
 
-    # МИНИ-ПЛЕЕР В СТИЛЕ ЯНДЕКС МУЗЫКИ
     MDBoxLayout:
         id: player_bar
         orientation: "vertical"
@@ -413,7 +472,7 @@ MDBoxLayout:
             size_hint_y: None
             height: "60dp"
             padding: "8dp"
-            spacing: "8dp"
+            spacing: "6dp"
             Image:
                 id: player_cover
                 size_hint: None, None
@@ -540,7 +599,7 @@ MDBoxLayout:
             MDBoxLayout:
                 orientation: "vertical"
                 padding: "12dp"
-                spacing: "10dp"
+                spacing: "8dp"
 
                 MDTextField:
                     id: search_input
@@ -593,22 +652,31 @@ MDBoxLayout:
 
                 MDBoxLayout:
                     size_hint_y: None
-                    height: "46dp"
-                    spacing: "6dp"
+                    height: "44dp"
+                    spacing: "8dp"
                     MDRaisedButton:
                         text: "Обновить"
+                        size_hint_x: 1
                         md_bg_color: 0.22, 0.20, 0.32, 1
                         on_release: app.refresh_projects_ui()
                     MDRaisedButton:
                         text: "Выбрать"
+                        size_hint_x: 1
                         md_bg_color: 0.55, 0.40, 0.22, 1
                         on_release: app.toggle_selection_mode()
+
+                MDBoxLayout:
+                    size_hint_y: None
+                    height: "44dp"
+                    spacing: "8dp"
                     MDRaisedButton:
                         text: "Калькулятор"
+                        size_hint_x: 1
                         md_bg_color: 0.30, 0.50, 0.45, 1
                         on_release: app.show_revenue_calculator()
                     MDRaisedButton:
                         text: "Гайд"
+                        size_hint_x: 1
                         md_bg_color: 0.28, 0.45, 0.72, 1
                         on_release: app.show_monetize_guide()
 
@@ -725,10 +793,12 @@ MDBoxLayout:
                                 height: "46dp"
                                 MDRaisedButton:
                                     text: "Диагностика"
+                                    size_hint_x: 1
                                     md_bg_color: 0.50, 0.32, 0.60, 1
                                     on_release: app.run_key_diagnostics()
                                 MDRaisedButton:
                                     text: "Резерв Yandex"
+                                    size_hint_x: 1
                                     md_bg_color: 0.68, 0.24, 0.24, 1
                                     on_release: app.backup_to_yandex()
                             MDRaisedButton:
@@ -820,7 +890,6 @@ MDBoxLayout:
                         halign: "center"
 '''
 
-# ===== ФОРМЫ РЕЖИМОВ СТУДИИ =====
 FORM_SINGLE = '''
 MDScrollView:
     MDBoxLayout:
@@ -888,10 +957,35 @@ MDScrollView:
                     text_color: 0.62, 0.60, 0.70, 1
                     font_style: "Caption"
 
-        MDRaisedButton:
-            text: "История промптов"
-            md_bg_color: 0.22, 0.20, 0.32, 1
-            on_release: app.show_prompt_history()
+        MDCard:
+            orientation: "vertical"
+            padding: "12dp"
+            radius: [16, 16, 16, 16]
+            elevation: 1
+            size_hint_y: None
+            height: "90dp"
+            md_bg_color: 0.10, 0.095, 0.15, 1
+            MDLabel:
+                id: s_enhanced_label
+                text: "Улучшенный промпт появится здесь"
+                theme_text_color: "Custom"
+                text_color: 0.62, 0.60, 0.70, 1
+                font_style: "Caption"
+
+        MDBoxLayout:
+            spacing: "8dp"
+            size_hint_y: None
+            height: "46dp"
+            MDRaisedButton:
+                text: "Улучшить промпт"
+                size_hint_x: 1
+                md_bg_color: 0.24, 0.58, 0.44, 1
+                on_release: app.enhance_single()
+            MDRaisedButton:
+                text: "История"
+                size_hint_x: 1
+                md_bg_color: 0.22, 0.20, 0.32, 1
+                on_release: app.show_prompt_history()
 
         MDRaisedButton:
             text: "Сгенерировать сингл"
@@ -940,22 +1034,22 @@ MDScrollView:
             radius: [20, 20, 20, 20]
             elevation: 3
             size_hint_y: None
-            height: "330dp"
+            height: "300dp"
             md_bg_color: 0.115, 0.11, 0.165, 1
             MDBoxLayout:
                 orientation: "vertical"
                 spacing: "14dp"
                 MDLabel:
-                    text: "Опиши настроение, инструменты, темп, вокал"
+                    text: "Черновик идеи (можно коротко и с опечатками)"
                     theme_text_color: "Custom"
                     text_color: 0.72, 0.70, 0.82, 1
                 MDTextField:
                     id: p_prompt_input
-                    hint_text: "Например: мягкий мелодичный drum and bass, женский вокал, тёплые пэды, 174 bpm, настроение светлой грусти"
+                    hint_text: "Например: песня Олеси про работу бухгалтером, мягкий drum and bass с женским вокалом"
                     mode: "rectangle"
                     multiline: True
                     size_hint_y: None
-                    height: "170dp"
+                    height: "150dp"
                     line_color_normal: 0.30, 0.28, 0.42, 1
                     line_color_focus: 0.4, 0.75, 0.6, 1
                 MDTextField:
@@ -966,10 +1060,31 @@ MDScrollView:
                     line_color_normal: 0.30, 0.28, 0.42, 1
                     line_color_focus: 0.4, 0.75, 0.6, 1
 
+        MDCard:
+            orientation: "vertical"
+            padding: "12dp"
+            radius: [16, 16, 16, 16]
+            elevation: 1
+            size_hint_y: None
+            height: "110dp"
+            md_bg_color: 0.10, 0.095, 0.15, 1
+            MDLabel:
+                id: p_enhanced_label
+                text: "Улучшенный промпт появится здесь"
+                theme_text_color: "Custom"
+                text_color: 0.62, 0.60, 0.70, 1
+                font_style: "Caption"
+
+        MDRaisedButton:
+            text: "Улучшить промпт"
+            size_hint_x: 1
+            md_bg_color: 0.24, 0.58, 0.44, 1
+            on_release: app.enhance_prompt_mode()
+
         MDRaisedButton:
             text: "Создать трек по промпту"
             size_hint_x: 1
-            md_bg_color: 0.24, 0.58, 0.44, 1
+            md_bg_color: 0.42, 0.34, 0.78, 1
             on_release: app.start_prompt_generation()
 
         MDCard:
@@ -989,6 +1104,44 @@ MDScrollView:
                 id: p_progress
                 value: 0
                 max: 100
+
+        MDSeparator:
+            height: "2dp"
+
+        MDLabel:
+            text: "Фоновый трек для стримингов (доход)"
+            font_style: "Subtitle1"
+            theme_text_color: "Custom"
+            text_color: 0.82, 0.80, 0.92, 1
+
+        MDTextField:
+            id: m_niche_input
+            hint_text: "Ниша"
+            text: "Lo-Fi Study Beats"
+            mode: "rectangle"
+            line_color_normal: 0.30, 0.28, 0.42, 1
+            line_color_focus: 0.4, 0.75, 0.6, 1
+
+        MDTextField:
+            id: m_duration_input
+            hint_text: "Хронометраж (сек)"
+            text: "150"
+            mode: "rectangle"
+            line_color_normal: 0.30, 0.28, 0.42, 1
+            line_color_focus: 0.4, 0.75, 0.6, 1
+
+        MDRaisedButton:
+            text: "Создать фоновый трек"
+            size_hint_x: 1
+            md_bg_color: 0.30, 0.50, 0.45, 1
+            on_release: app.start_money_generation()
+
+        MDLabel:
+            id: m_status_label
+            text: ""
+            theme_text_color: "Custom"
+            text_color: 0.62, 0.60, 0.70, 1
+            font_style: "Caption"
 '''
 
 FORM_VIRAL = '''
@@ -1131,10 +1284,12 @@ MDScrollView:
             height: "46dp"
             MDRaisedButton:
                 text: "Свести EP"
+                size_hint_x: 1
                 md_bg_color: 0.50, 0.32, 0.75, 1
                 on_release: app.start_album_generation()
             MDRaisedButton:
                 text: "Трек в альбом"
+                size_hint_x: 1
                 md_bg_color: 0.30, 0.55, 0.5, 1
                 on_release: app.show_add_track_dialog()
 
@@ -1151,62 +1306,6 @@ MDScrollView:
                 text: "Ожидание..."
                 theme_text_color: "Custom"
                 text_color: 0.72, 0.70, 0.82, 1
-'''
-
-FORM_MONEY = '''
-MDScrollView:
-    MDBoxLayout:
-        orientation: "vertical"
-        padding: "16dp"
-        spacing: "14dp"
-        size_hint_y: None
-        height: self.minimum_height
-
-        MDLabel:
-            text: "Фоновый трек для стримингов"
-            font_style: "H5"
-            bold: True
-            theme_text_color: "Custom"
-            text_color: 0.95, 0.94, 0.98, 1
-
-        MDCard:
-            orientation: "vertical"
-            padding: "16dp"
-            radius: [20, 20, 20, 20]
-            elevation: 3
-            size_hint_y: None
-            height: "220dp"
-            md_bg_color: 0.115, 0.11, 0.165, 1
-            MDBoxLayout:
-                orientation: "vertical"
-                spacing: "14dp"
-                MDTextField:
-                    id: m_niche_input
-                    hint_text: "Ниша"
-                    text: "Lo-Fi Study Beats"
-                    mode: "rectangle"
-                    line_color_normal: 0.30, 0.28, 0.42, 1
-                    line_color_focus: 0.4, 0.75, 0.6, 1
-                MDTextField:
-                    id: m_duration_input
-                    hint_text: "Хронометраж (сек)"
-                    text: "150"
-                    mode: "rectangle"
-                    line_color_normal: 0.30, 0.28, 0.42, 1
-                    line_color_focus: 0.4, 0.75, 0.6, 1
-
-        MDRaisedButton:
-            text: "Создать фоновый трек"
-            size_hint_x: 1
-            md_bg_color: 0.30, 0.50, 0.45, 1
-            on_release: app.start_money_generation()
-
-        MDLabel:
-            id: m_status_label
-            text: ""
-            theme_text_color: "Custom"
-            text_color: 0.62, 0.60, 0.70, 1
-            font_style: "Caption"
 '''
 
 
@@ -1237,6 +1336,7 @@ class LemusStudioApp(MDApp):
         self.modes = {}
         self.current_mode = "single"
         self._last_gen = None
+        self._enhanced_cache = {}
 
         self.file_manager = MDFileManager(
             exit_manager=self.exit_file_manager,
@@ -1260,7 +1360,6 @@ class LemusStudioApp(MDApp):
             "prompt": Builder.load_string(FORM_PROMPT),
             "viral": Builder.load_string(FORM_VIRAL),
             "album": Builder.load_string(FORM_ALBUM),
-            "money": Builder.load_string(FORM_MONEY),
         }), "формы")
         safe(lambda: self.switch_mode("single"), "режим")
         safe(self._request_runtime_permissions, "разрешения")
@@ -1307,6 +1406,85 @@ class LemusStudioApp(MDApp):
             seen[hk] = True
             self.save_config_to_disk()
             toast(HINTS[hk])
+
+    # ===== УЛУЧШАТЕЛЬ ПРОМПТОВ =====
+    def enhance_single(self):
+        w = self.modes["single"].ids
+        t = w.s_title_input.text.strip()
+        g = w.s_genre_input.text.strip()
+        raw = f"{t}. {g}".strip(". ")
+        if not raw:
+            toast("Сначала укажи тему!")
+            return
+        self._run_enhance(raw, "single")
+
+    def enhance_prompt_mode(self):
+        raw = self.modes["prompt"].ids.p_prompt_input.text.strip()
+        if not raw:
+            toast("Сначала напиши идею!")
+            return
+        self._run_enhance(raw, "prompt")
+
+    def _run_enhance(self, raw, mode):
+        toast("Улучшаю промпт...")
+        def work():
+            txt = self._enhance_sync(raw)
+            self._enhanced_cache[mode] = txt
+            lid = "s_enhanced_label" if mode == "single" else "p_enhanced_label"
+            Clock.schedule_once(lambda dt: setattr(self.modes[mode].ids[lid], "text",
+                                f"Промпт: {txt}"), 0)
+            Clock.schedule_once(lambda dt: toast("Промпт улучшен!"), 0)
+        threading.Thread(target=work).start()
+
+    def _enhance_sync(self, raw):
+        try:
+            res = self._call_llm_text(ENHANCE_SYSTEM + "\nЧерновик: " + raw)
+            if res and len(res.strip()) > 20:
+                return res.strip()[:600]
+        except Exception as e:
+            print(f"enhance llm: {e}")
+        return _local_enhance(raw)
+
+    def _call_llm_text(self, prompt):
+        g_keys = self.config.get("gemini_keys", [])
+        if not g_keys and self.config.get("gemini_key"):
+            g_keys = [self.config.get("gemini_key")]
+        for key in g_keys:
+            if not key:
+                continue
+            for model in GEMINI_MODELS:
+                try:
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+                    headers = {"Content-Type": "application/json", "x-goog-api-key": key.strip()}
+                    payload = {"contents": [{"parts": [{"text": prompt}]}],
+                               "generationConfig": {"temperature": 0.9}}
+                    data = json.dumps(payload).encode("utf-8")
+                    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+                    with urllib.request.urlopen(req, timeout=30) as r:
+                        res = json.loads(r.read().decode("utf-8"))
+                        return res["candidates"][0]["content"]["parts"][0]["text"]
+                except urllib.error.HTTPError as e:
+                    if e.code in (400, 401, 403):
+                        break
+                    continue
+                except Exception:
+                    continue
+        or_key = self.config.get("openrouter_key", "").strip()
+        if or_key:
+            try:
+                headers = {"Authorization": f"Bearer {or_key}", "Content-Type": "application/json"}
+                payload = json.dumps({
+                    "model": "qwen/qwen3.8-27b:free",
+                    "messages": [{"role": "system", "content": ENHANCE_SYSTEM},
+                                 {"role": "user", "content": prompt}]}).encode("utf-8")
+                req = urllib.request.Request("https://openrouter.ai/api/v1/chat/completions",
+                                             data=payload, headers=headers)
+                with urllib.request.urlopen(req, timeout=60) as r:
+                    res = json.loads(r.read().decode())
+                    return res["choices"][0]["message"]["content"]
+            except Exception:
+                pass
+        return ""
 
     def make_variation(self):
         if not self._last_gen:
@@ -1440,7 +1618,7 @@ class LemusStudioApp(MDApp):
 
     # ===== ПЛЕЕР =====
     def _player_show(self):
-        Animation(height=dp(64), d=0.22, t="out_quad").start(self.root.ids.player_bar)
+        Animation(height=dp(68), d=0.22, t="out_quad").start(self.root.ids.player_bar)
 
     def _player_hide(self):
         Animation(height=dp(0), d=0.18, t="in_quad").start(self.root.ids.player_bar)
@@ -1460,7 +1638,7 @@ class LemusStudioApp(MDApp):
         try:
             length = s.length or 0
             if length > 0:
-                s.seek(ratio * length)
+                s.seek(max(0.0, min(1.0, ratio)) * length)
                 self.root.ids.player_pos.text = self._fmt(ratio * length)
         except Exception:
             toast("Перемотка недоступна для этого файла")
@@ -1501,11 +1679,6 @@ class LemusStudioApp(MDApp):
             else:
                 img.opacity = 0
             self.root.ids.player_seek.value = 0.0
-            try:
-                length = self.active_sound.length or 0
-                self.root.ids.player_len_text = length
-            except Exception:
-                pass
             if self._pos_event is None:
                 self._pos_event = Clock.schedule_interval(self._update_player_pos, 0.4)
 
@@ -1595,7 +1768,7 @@ class LemusStudioApp(MDApp):
         except Exception as e:
             toast(f"Ошибка сохранения: {str(e)[:40]}")
 
-    # ===== ГЕНЕРАЦИЯ (Suno-подход) =====
+    # ===== ГЕНЕРАЦИЯ =====
     def _build_plan_prompt(self, base_desc, genre, duration, vocals_hint=""):
         return (
             "Ты — профессиональный музыкальный продюсер уровня Suno/Udio.\n"
@@ -1622,27 +1795,25 @@ class LemusStudioApp(MDApp):
         if not t:
             toast("Укажи тему!")
             return
+        raw = f"{t}. {g}"
         self.add_to_history("Сингл", f"{t} / {g} / {d}с")
-        prompt = self._build_plan_prompt(f"Идея: {t}", g, int(d),
-                                         "клон голоса пользователя" if self.current_voice_sample else "")
-        w.s_status_label.text = "Gemini пишет план трека..."
-        self._last_gen = {"prompt": prompt, "genre": g, "duration": int(d), "rtype": "Сингл"}
-        threading.Thread(target=self._worker_plan, args=(prompt, g, int(d), "Сингл",
+        w.s_status_label.text = "Улучшаю промпт и пишу план..."
+        self._last_gen = {"genre": g, "duration": int(d), "rtype": "Сингл", "raw": raw, "mode": "single"}
+        threading.Thread(target=self._worker_track, args=(raw, t, g, int(d), "Сингл",
             w.s_status_label, w.s_progress)).start()
 
     def start_prompt_generation(self):
         w = self.modes["prompt"].ids
-        prompt_text = w.p_prompt_input.text.strip()
+        raw = w.p_prompt_input.text.strip()
         dur = int(w.p_duration_input.text.strip() or "120")
-        if not prompt_text:
+        if not raw:
             toast("Опиши свою идею!")
             return
-        self.add_to_history("Промпт", f"{prompt_text[:100]} / {dur}с")
-        prompt = self._build_plan_prompt(prompt_text, "по описанию", dur)
-        w.p_status_label.text = "Gemini пишет план трека..."
-        self._last_gen = {"prompt": prompt, "genre": prompt_text[:40], "duration": dur, "rtype": "Промпт"}
-        threading.Thread(target=self._worker_plan, args=(prompt, prompt_text, dur, "Промпт",
-            w.p_status_label, w.p_progress)).start()
+        self.add_to_history("Промпт", f"{raw[:100]} / {dur}с")
+        w.p_status_label.text = "Улучшаю промпт и пишу план..."
+        self._last_gen = {"genre": raw[:40], "duration": dur, "rtype": "Промпт", "raw": raw, "mode": "prompt"}
+        threading.Thread(target=self._worker_generic,
+            args=(raw, raw, dur, "Промпт", w.p_status_label, w.p_progress)).start()
 
     def start_viral_generation(self):
         w = self.modes["viral"].ids
@@ -1652,29 +1823,26 @@ class LemusStudioApp(MDApp):
         if not h:
             toast("Укажи хук!")
             return
+        raw = f"Вирусный хит TikTok/Reels. Хук: '{h}'. Жанр: {g}."
         self.add_to_history("Хит", f"Хук: {h} / {g} / {d}с")
-        prompt = self._build_plan_prompt(
-            f"Вирусный хит TikTok/Reels. Хук: '{h}'. Структура: хук с первой секунды, дроп, loop.", g, int(d))
-        w.v_status_label.text = "Gemini пишет план трека..."
-        self._last_gen = {"prompt": prompt, "genre": g, "duration": int(d), "rtype": "Хит"}
-        threading.Thread(target=self._worker_plan, args=(prompt, g, int(d), "Хит",
-            w.v_status_label, w.v_progress)).start()
+        w.v_status_label.text = "Улучшаю промпт и пишу план..."
+        self._last_gen = {"genre": g, "duration": int(d), "rtype": "Хит", "raw": raw, "mode": "viral"}
+        threading.Thread(target=self._worker_generic,
+            args=(raw, g, int(d), "Хит", w.v_status_label, w.v_progress)).start()
 
     def start_money_generation(self):
-        w = self.modes["money"].ids
+        w = self.modes["prompt"].ids
         n = w.m_niche_input.text.strip()
         d = w.m_duration_input.text.strip() or "150"
         if not n:
             toast("Укажи нишу!")
             return
+        raw = f"Фоновый монетизируемый трек для стримингов. Ниша: '{n}'. Loop-friendly, без резких пиков."
         self.add_to_history("Фон", f"Ниша: {n} / {d}с")
-        prompt = self._build_plan_prompt(
-            f"Фоновый монетизируемый трек для стримингов. Ниша: '{n}'. Loop-friendly, без резких пиков.", n, int(d),
-            "instrumental")
-        w.m_status_label.text = "Gemini пишет план трека..."
-        self._last_gen = {"prompt": prompt, "genre": n, "duration": int(d), "rtype": "Фон"}
-        threading.Thread(target=self._worker_plan, args=(prompt, n, int(d), "Фон",
-            w.m_status_label, None)).start()
+        w.m_status_label.text = "Улучшаю промпт и пишу план..."
+        self._last_gen = {"genre": n, "duration": int(d), "rtype": "Фон", "raw": raw, "mode": "prompt"}
+        threading.Thread(target=self._worker_generic,
+            args=(raw, n, int(d), "Фон", w.m_status_label, None)).start()
 
     def start_album_generation(self):
         w = self.modes["album"].ids
@@ -1689,10 +1857,20 @@ class LemusStudioApp(MDApp):
         w.alb_status_label.text = "Gemini пишет концепцию EP..."
         threading.Thread(target=self._worker_album, args=(theme, genre, cnt, dur)).start()
 
-    def _worker_plan(self, prompt, genre, duration, rtype, label, prog):
+    def _worker_track(self, raw, title_idea, genre, dur, rtype, label, prog):
+        demo = f"Голос: {os.path.basename(self.current_voice_sample)}." if self.current_voice_sample else "Нейро-вокал."
+        full = f"{raw} {demo}"
+        self._worker_generic(full, genre, dur, rtype, label, prog)
+
+    def _worker_generic(self, raw_desc, genre, duration, rtype, label, prog):
         notes = []
+        mode = (self._last_gen or {}).get("mode", self.current_mode)
         try:
-            Clock.schedule_once(lambda dt: self._update_progress(label, prog, "Gemini: план, текст, стиль...", 10), 0)
+            Clock.schedule_once(lambda dt: self._update_progress(label, prog, "Улучшаю промпт...", 8), 0)
+            enhanced = self._enhanced_cache.pop(mode, None) or self._enhance_sync(raw_desc)
+            Clock.schedule_once(lambda dt: self._show_enhanced(mode, enhanced), 0)
+            Clock.schedule_once(lambda dt: self._update_progress(label, prog, "Gemini: план, текст, стиль...", 15), 0)
+            prompt = self._build_plan_prompt(enhanced, genre, duration)
             llm = self._producer_with_critic(prompt)
             plan = {
                 "bpm": llm.get("bpm"), "key": llm.get("key"),
@@ -1709,16 +1887,16 @@ class LemusStudioApp(MDApp):
                 notes.append("ключи не ответили — план локальный")
                 plan = {"bpm": None, "key": None, "sections": None}
 
-            Clock.schedule_once(lambda dt: self._update_progress(label, prog, "Рисуем обложку 3000x3000...", 30), 0)
+            Clock.schedule_once(lambda dt: self._update_progress(label, prog, "Рисуем обложку 3000x3000...", 35), 0)
             cover = self._generate_image(llm.get("cover_prompt", f"{genre} cover"))
 
-            Clock.schedule_once(lambda dt: self._update_progress(label, prog, f"Синтез звука ({duration}с)...", 50), 0)
-            audio, audio_src = self._generate_audio_chunk(music_prompt, duration, plan)
+            Clock.schedule_once(lambda dt: self._update_progress(label, prog, f"Синтез звука ({duration}с)...", 55), 0)
+            audio, audio_src = self._generate_audio_chunk(music_prompt + " " + enhanced, duration, plan)
             if audio_src == "proc":
                 notes.append("звук синтезирован в студии")
 
             if lyrics and self.current_voice_sample:
-                Clock.schedule_once(lambda dt: self._update_progress(label, prog, "Клонирование голоса...", 70), 0)
+                Clock.schedule_once(lambda dt: self._update_progress(label, prog, "Клонирование голоса...", 75), 0)
                 self._fish_clone(lyrics, self.current_voice_sample)
 
             Clock.schedule_once(lambda dt: self._update_progress(label, prog, "Сохранение и мастеринг...", 90), 0)
@@ -1744,11 +1922,13 @@ class LemusStudioApp(MDApp):
                 "lyrics": lyrics,
                 "lyrics_tts": self._prepare_lyrics_for_tts(lyrics),
                 "bpm": plan.get("bpm"), "key": plan.get("key"),
+                "enhanced_prompt": enhanced,
                 "critic_total": total, "critic_verdict": verdict,
                 "ai_disclose": bool(self.config.get("disclose_ai", True)),
                 "date": time.strftime("%Y-%m-%d %H:%M"),
             })
             self.save_projects()
+            self._last_gen = {"prompt": prompt, "genre": genre, "duration": duration, "rtype": rtype}
 
             msg = f"Готово! Критик: {total}/10"
             if plan.get("bpm"):
@@ -1763,6 +1943,13 @@ class LemusStudioApp(MDApp):
             traceback.print_exc()
             Clock.schedule_once(lambda dt: self._update_progress(label, prog, f"Ошибка: {str(e)[:60]}", 0), 0)
 
+    def _show_enhanced(self, mode, txt):
+        try:
+            lid = "s_enhanced_label" if mode == "single" else "p_enhanced_label"
+            setattr(self.modes[mode].ids[lid], "text", f"Промпт: {txt}")
+        except Exception:
+            pass
+
     def _update_progress(self, label, prog, text, val):
         if label is not None:
             label.text = text
@@ -1771,7 +1958,8 @@ class LemusStudioApp(MDApp):
 
     def _worker_album(self, theme, genre, cnt, dur):
         try:
-            prompt = (f"EP из {cnt} треков по {dur}с. Тема: '{theme}', жанр: {genre}. "
+            enhanced = self._enhance_sync(f"Альбом: {theme}. Жанр: {genre}.")
+            prompt = (f"EP из {cnt} треков по {dur}с. Тема: '{enhanced}', жанр: {genre}. "
                       "Ударения через +. JSON: album_title, cover_prompt, tracks(title, music_prompt, lyrics, bpm, key).")
             llm = self._producer_with_critic(prompt)
             album = llm.get("album_title", "EP")
@@ -1815,8 +2003,8 @@ class LemusStudioApp(MDApp):
             genre = album.get("genre", "")
             theme = idea or f"продолжение альбома '{album['title']}'"
             demo = f"Голос: {os.path.basename(self.current_voice_sample)}." if self.current_voice_sample else ""
-            prompt = self._build_plan_prompt(
-                f"Трек для альбома '{album['title']}' (жанр: {genre}). Тема: {theme}. {demo}", genre, dur)
+            enhanced = self._enhance_sync(f"Трек для альбома '{album['title']}'. Тема: {theme}. {demo}")
+            prompt = self._build_plan_prompt(enhanced, genre, dur)
             llm = self._producer_with_critic(prompt)
             plan = {"bpm": llm.get("bpm"), "key": llm.get("key"), "sections": llm.get("sections")}
             title = llm.get("title", "Track")
@@ -1885,7 +2073,7 @@ class LemusStudioApp(MDApp):
         try:
             enc = urllib.parse.quote(prompt[:180])
             url = f"https://image.pollinations.ai/prompt/{enc}?width=3000&height=3000&nologo=true"
-            req = urllib.request.Request(url, headers={"User-Agent": "LemusStudio/6.0"})
+            req = urllib.request.Request(url, headers={"User-Agent": "LemusStudio/6.1"})
             with urllib.request.urlopen(req, timeout=60) as r:
                 d = r.read()
                 if len(d) > 5000:
@@ -1912,7 +2100,7 @@ class LemusStudioApp(MDApp):
         try:
             enc = urllib.parse.quote(prompt[:160])
             req = urllib.request.Request(f"https://audio.pollinations.ai/prompt/{enc}",
-                                          headers={"User-Agent": "LemusStudio/6.0"})
+                                          headers={"User-Agent": "LemusStudio/6.1"})
             with urllib.request.urlopen(req, timeout=60) as r:
                 d = r.read()
                 if _looks_like_audio(d):
@@ -2366,7 +2554,7 @@ class LemusStudioApp(MDApp):
     def _fetch_remote_keys_thread(self):
         try:
             req = urllib.request.Request(REMOTE_KEYS_URL,
-                headers={"User-Agent": "LemusStudio/6.0", "Accept": "application/json"})
+                headers={"User-Agent": "LemusStudio/6.1", "Accept": "application/json"})
             with urllib.request.urlopen(req, timeout=15) as r:
                 remote = json.loads(r.read().decode("utf-8"))
             for k, v in remote.items():
@@ -2463,7 +2651,7 @@ class LemusStudioApp(MDApp):
         lines = ["Диагностика ключей:"]
         try:
             req = urllib.request.Request("https://generativelanguage.googleapis.com/v1beta/models?key=invalid_test",
-                                         headers={"User-Agent": "LemusStudio/6.0"})
+                                         headers={"User-Agent": "LemusStudio/6.1"})
             try:
                 urllib.request.urlopen(req, timeout=10)
                 lines.append("Сеть и SSL: в порядке")
@@ -2574,8 +2762,8 @@ class LemusStudioApp(MDApp):
 
     def _render_onboard_card(self):
         cards = [
-            ("LEMUS AI MUSIC STUDIO", "Продюсерская станция с ИИ.\n\nРежимы: Сингл, Промпт, Хит, Альбом, Фон.\nКаждый трек: текст → план → звук → обложка → мастеринг."),
-            ("Как получать качественные треки", "Описывай конкретно: жанр, настроение, инструменты, темп, вокал.\nПример: «мягкий melodic drum and bass, женский вокал, тёплые пэды, 174 bpm»."),
+            ("LEMUS AI MUSIC STUDIO", "Продюсерская станция с ИИ.\n\nРежимы: Сингл, Промпт, Хит, Альбом, Фон.\nКаждый трек: улучшенный промпт → план → звук → обложка → мастеринг."),
+            ("Улучшатель промптов", "Пиши черново — студия допишет.\n«Песня Олеси про Купер, мягкий drumm and base» →\n«Melodic drum and bass, женский вокал, тёплые пэды, 174 bpm, светлая грусть. Структура: интро, куплет, дроп-припев»."),
             ("Структура как у Suno", "Gemini пишет текст с тегами [Verse], [Chorus], [Bridge].\nПлан секций управляет аранжировкой: куплет тише, припев полнее."),
             ("Встроенный плеер", "Мини-плеер с обложкой и перемоткой (жёлтая линия).\nКнопка загрузки сохраняет трек в Download."),
             ("Голос и ударения", "• Демоголос 10-30 сек → клон Fish.audio\n• Ударения через + (авто-очистка)\n• Клон копирует интонацию образца"),
@@ -2850,7 +3038,7 @@ class LemusStudioApp(MDApp):
     def _check_update_thread(self, silent):
         try:
             req = urllib.request.Request(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
-                headers={"User-Agent": "LemusStudio/6.0", "Accept": "application/vnd.github.v3+json"})
+                headers={"User-Agent": "LemusStudio/6.1", "Accept": "application/vnd.github.v3+json"})
             with urllib.request.urlopen(req, timeout=10) as r:
                 data = json.loads(r.read().decode())
                 remote = data.get("tag_name", "").lstrip("v")
