@@ -11,7 +11,17 @@ def _log(msg):
     except Exception:
         pass
 
-_log("=== STARTUP v5.3.0 ===")
+_log("=== STARTUP v5.4.0 ===")
+
+# ===== SSL-СЕРТИФИКАТЫ (главный фикс ключей) =====
+try:
+    import certifi, ssl
+    os.environ["SSL_CERT_FILE"] = certifi.where()
+    os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
+    ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
+    _log("SSL: certifi подключён")
+except Exception as e:
+    _log(f"SSL patch пропущен: {e}")
 
 try:
     from kivy.lang import Builder
@@ -19,6 +29,7 @@ try:
     from kivy.core.audio import SoundLoader
     from kivy.clock import Clock
     from kivy.metrics import dp
+    from kivy.animation import Animation
     _log("OK kivy")
 except Exception as e:
     _log(f"FAIL kivy: {e}")
@@ -50,7 +61,7 @@ try:
                 def __init__(self, **kwargs):
                     kwargs.setdefault('size_hint_y', None)
                     kwargs.setdefault('height', '1dp')
-                    kwargs.setdefault('md_bg_color', [0.3, 0.3, 0.35, 1])
+                    kwargs.setdefault('md_bg_color', [0.25, 0.24, 0.32, 1])
                     super().__init__(**kwargs)
     try:
         from kivymd.uix.switch import MDSwitch
@@ -75,7 +86,7 @@ except Exception as e:
     _log(f"FAIL kivymd: {e}")
     raise
 
-CURRENT_VERSION = "5.3.0"
+CURRENT_VERSION = "5.4.0"
 CONFIG_FILE = "lemus_studio_config.json"
 PROJECTS_FILE = "lemus_projects_db.json"
 HISTORY_FILE = "lemus_prompts_history.json"
@@ -97,7 +108,21 @@ EMPTY_CONFIG = {
     "disclose_ai": True,
 }
 
+# ===== ХРАНИЛИЩЕ =====
 _STORAGE_ROOT = None
+
+def _android_private():
+    try:
+        from jnius import autoclass
+        PythonActivity = autoclass("org.kivy.android.PythonActivity")
+        activity = PythonActivity.mActivity
+        if activity:
+            d = activity.getExternalFilesDir(None)
+            if d:
+                return os.path.join(d.getAbsolutePath(), "LemusStudio")
+    except Exception:
+        pass
+    return None
 
 def get_storage_root():
     global _STORAGE_ROOT
@@ -106,16 +131,9 @@ def get_storage_root():
     candidates = []
     if platform == "android":
         candidates.append("/storage/emulated/0/Music/LemusStudio")
-        try:
-            from jnius import autoclass
-            PythonActivity = autoclass("org.kivy.android.PythonActivity")
-            activity = PythonActivity.mActivity
-            if activity:
-                d = activity.getExternalFilesDir(None)
-                if d:
-                    candidates.append(os.path.join(d.getAbsolutePath(), "LemusStudio"))
-        except Exception:
-            pass
+        p = _android_private()
+        if p:
+            candidates.append(p)
     else:
         candidates.append(os.path.join(os.path.expanduser("~"), "LemusStudio"))
     for p in candidates:
@@ -131,24 +149,106 @@ def get_storage_root():
     _STORAGE_ROOT = "."
     return _STORAGE_ROOT
 
+# ===== ПРОЦЕДУРНЫЙ СИНТЕЗАТОР (музыка вместо «радио») =====
+def _procedural_wav(duration, seed_text):
+    import random
+    rnd = random.Random(int(hashlib.md5(seed_text.encode()).hexdigest()[:8], 16))
+    sr = 22050
+    dur = max(20, min(int(duration), 75))
+    n = sr * dur
+    buf = [0.0] * n
+    bpm = rnd.choice([95, 105, 115, 124])
+    beat = sr * 60.0 / bpm
+    bar = beat * 4
+    chords = [
+        [220.00, 261.63, 329.63],
+        [174.61, 220.00, 261.63],
+        [261.63, 329.63, 392.00],
+        [196.00, 246.94, 293.66],
+    ]
+    penta = [440.0, 523.25, 587.33, 659.25, 783.99, 880.0]
+
+    def add(start, length, freq, amp, decay, harm):
+        i0 = int(start)
+        if i0 >= n:
+            return
+        ln = min(int(length), n - i0)
+        two_pi = 2 * math.pi * freq
+        four_pi = 4 * math.pi * freq
+        for i in range(ln):
+            t = i / sr
+            env = min(1.0, t / 0.012) * (decay ** (t * 3.0))
+            buf[i0 + i] += amp * env * (math.sin(two_pi * t) + harm * 0.5 * math.sin(four_pi * t))
+
+    bars = int(n / bar) + 1
+    for b in range(bars):
+        ch = chords[b % 4]
+        s0 = b * bar
+        for f in ch:
+            add(s0, bar, f, 0.09, 0.995, 0.3)
+        add(s0, bar, ch[0] / 2.0, 0.15, 0.99, 0.1)
+        for k in range(4):
+            i0 = int(s0 + k * beat)
+            if i0 < n:
+                ln = min(int(0.12 * sr), n - i0)
+                for i in range(ln):
+                    t = i / sr
+                    f = 110 * math.exp(-t * 18) + 42
+                    buf[i0 + i] += 0.4 * math.exp(-t * 22) * math.sin(2 * math.pi * f * t)
+            i1 = int(s0 + k * beat + beat / 2)
+            if i1 < n:
+                ln = min(int(0.04 * sr), n - i1)
+                for i in range(ln):
+                    t = i / sr
+                    buf[i1 + i] += 0.09 * math.exp(-t * 90) * (rnd.random() * 2 - 1)
+        for k in range(8):
+            if rnd.random() < 0.55:
+                add(s0 + k * beat / 2, beat / 2, rnd.choice(penta), 0.11, 0.985, 0.6)
+    fade = int(0.8 * sr)
+    out = bytearray()
+    for i in range(n):
+        v = math.tanh(buf[i] * 1.2) * 0.85
+        if i < fade:
+            v *= i / fade
+        if i > n - fade:
+            v *= (n - i) / fade
+        s = int(max(-32000, min(32000, v * 32767)))
+        out += struct.pack("<hh", s, s)
+    hdr = (b"RIFF" + struct.pack("<I", 36 + len(out)) + b"WAVEfmt " +
+           struct.pack("<IHHIIHH", 16, 1, 2, sr, sr * 4, 4, 16) + b"data" + struct.pack("<I", len(out)))
+    return hdr + bytes(out)
+
+def _looks_like_audio(d):
+    if not d or len(d) < 2000:
+        return False
+    return (d[:3] == b"ID3" or d[:2] in (b"\xff\xfb", b"\xff\xf3") or
+            d[:4] in (b"RIFF", b"OggS", b"fLaC"))
+
 KV = '''
 MDBoxLayout:
     orientation: "vertical"
+    canvas.before:
+        Color:
+            rgba: 0.066, 0.066, 0.09, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
 
     MDTopAppBar:
         title: "Lemus AI Music Studio"
-        elevation: 4
-        md_bg_color: 0.13, 0.10, 0.20, 1
-        specific_text_color: 0.95, 0.92, 1, 1
+        elevation: 6
+        md_bg_color: 0.10, 0.088, 0.16, 1
+        specific_text_color: 0.93, 0.92, 0.97, 1
         right_action_items: [["shield-key-outline", lambda x: app.show_vault_status()], ["information-outline", lambda x: app.show_onboarding()]]
 
     MDBoxLayout:
         id: player_bar
         size_hint_y: None
         height: "0dp"
-        padding: "4dp"
+        padding: "6dp"
         spacing: "2dp"
-        md_bg_color: 0.10, 0.08, 0.16, 1
+        md_bg_color: 0.13, 0.11, 0.20, 1
+        opacity: 0 if self.height == 0 else 1
         MDIconButton:
             icon: "skip-previous"
             theme_text_color: "Custom"
@@ -158,7 +258,7 @@ MDBoxLayout:
             id: player_play_btn
             icon: "pause"
             theme_text_color: "Custom"
-            text_color: 0.85, 0.8, 1, 1
+            text_color: 0.95, 0.9, 1, 1
             on_release: app.player_toggle()
         MDIconButton:
             icon: "skip-next"
@@ -175,7 +275,7 @@ MDBoxLayout:
             text: ""
             shorten: True
             theme_text_color: "Custom"
-            text_color: 0.95, 0.92, 1, 1
+            text_color: 0.93, 0.92, 0.97, 1
         MDLabel:
             id: player_pos
             text: "0:00"
@@ -183,13 +283,13 @@ MDBoxLayout:
             width: "52dp"
             halign: "right"
             theme_text_color: "Custom"
-            text_color: 0.7, 0.65, 0.9, 1
+            text_color: 0.7, 0.66, 0.85, 1
 
     MDBottomNavigation:
         id: bottom_nav
-        panel_color: 0.10, 0.08, 0.16, 1
-        text_color_active: 0.75, 0.6, 1, 1
-        text_color_normal: 0.5, 0.48, 0.58, 1
+        panel_color: 0.10, 0.088, 0.16, 1
+        text_color_active: 0.80, 0.70, 1, 1
+        text_color_normal: 0.52, 0.50, 0.60, 1
 
         MDBottomNavigationItem:
             name: "tab_single"
@@ -200,18 +300,18 @@ MDBoxLayout:
                 MDBoxLayout:
                     orientation: "vertical"
                     padding: "16dp"
-                    spacing: "12dp"
+                    spacing: "14dp"
                     size_hint_y: None
                     height: self.minimum_height
 
                     MDCard:
                         orientation: "vertical"
-                        padding: "10dp"
-                        radius: [16, 16, 16, 16]
-                        elevation: 4
+                        padding: "14dp"
+                        radius: [18, 18, 18, 18]
+                        elevation: 6
                         size_hint_y: None
-                        height: "86dp"
-                        md_bg_color: 0.18, 0.13, 0.3, 1
+                        height: "92dp"
+                        md_bg_color: 0.16, 0.13, 0.28, 1
                         MDLabel:
                             text: "LEMUS"
                             font_style: "H4"
@@ -220,74 +320,87 @@ MDBoxLayout:
                             text_color: 0.82, 0.68, 1, 1
                             halign: "center"
                         MDLabel:
-                            text: "AI MUSIC STUDIO"
+                            text: "СТУДИЯ МУЗЫКИ С ИИ"
                             font_style: "Caption"
                             theme_text_color: "Custom"
-                            text_color: 0.62, 0.56, 0.78, 1
+                            text_color: 0.62, 0.58, 0.78, 1
                             halign: "center"
 
-                    MDLabel:
-                        text: "Создание сингла"
-                        font_style: "H6"
-
-                    MDTextField:
-                        id: s_title_input
-                        hint_text: "Тема / идея трека"
-                        mode: "rectangle"
-
-                    MDTextField:
-                        id: s_genre_input
-                        hint_text: "Жанр"
-                        text: "Pop"
-                        mode: "rectangle"
-
-                    MDTextField:
-                        id: s_duration_input
-                        hint_text: "Длительность (сек)"
-                        text: "90"
-                        mode: "rectangle"
-
-                    MDBoxLayout:
-                        spacing: "8dp"
+                    MDCard:
+                        orientation: "vertical"
+                        padding: "16dp"
+                        radius: [18, 18, 18, 18]
+                        elevation: 3
                         size_hint_y: None
-                        height: "48dp"
-                        MDRaisedButton:
-                            text: "Демоголос"
-                            md_bg_color: 0.35, 0.28, 0.5, 1
-                            on_release: app.open_file_manager("voice")
-                        MDIconButton:
-                            icon: "close-circle-outline"
-                            on_release: app.clear_voice_sample()
-
-                    MDLabel:
-                        id: voice_sample_label
-                        text: "Голос: не выбран"
-                        theme_text_color: "Secondary"
-                        font_style: "Caption"
+                        height: "300dp"
+                        md_bg_color: 0.115, 0.11, 0.165, 1
+                        MDBoxLayout:
+                            orientation: "vertical"
+                            spacing: "14dp"
+                            MDTextField:
+                                id: s_title_input
+                                hint_text: "Тема / идея трека"
+                                mode: "rectangle"
+                                line_color_normal: 0.30, 0.28, 0.42, 1
+                                line_color_focus: 0.62, 0.5, 0.95, 1
+                            MDTextField:
+                                id: s_genre_input
+                                hint_text: "Жанр"
+                                text: "Pop"
+                                mode: "rectangle"
+                                line_color_normal: 0.30, 0.28, 0.42, 1
+                                line_color_focus: 0.62, 0.5, 0.95, 1
+                            MDTextField:
+                                id: s_duration_input
+                                hint_text: "Длительность (сек)"
+                                text: "90"
+                                mode: "rectangle"
+                                line_color_normal: 0.30, 0.28, 0.42, 1
+                                line_color_focus: 0.62, 0.5, 0.95, 1
+                            MDBoxLayout:
+                                spacing: "8dp"
+                                size_hint_y: None
+                                height: "46dp"
+                                MDRaisedButton:
+                                    text: "Демоголос"
+                                    md_bg_color: 0.30, 0.26, 0.48, 1
+                                    on_release: app.open_file_manager("voice")
+                                MDIconButton:
+                                    icon: "close-circle-outline"
+                                    theme_text_color: "Custom"
+                                    text_color: 0.62, 0.58, 0.78, 1
+                                    on_release: app.clear_voice_sample()
+                            MDLabel:
+                                id: voice_sample_label
+                                text: "Голос: не выбран"
+                                theme_text_color: "Custom"
+                                text_color: 0.62, 0.60, 0.70, 1
+                                font_style: "Caption"
 
                     MDRaisedButton:
                         text: "История промптов"
-                        md_bg_color: 0.28, 0.25, 0.38, 1
+                        md_bg_color: 0.22, 0.20, 0.32, 1
                         on_release: app.show_prompt_history()
 
                     MDRaisedButton:
                         text: "Сгенерировать сингл"
                         size_hint_x: 1
-                        md_bg_color: 0.45, 0.32, 0.75, 1
+                        md_bg_color: 0.42, 0.34, 0.78, 1
                         on_release: app.start_single_generation()
 
                     MDCard:
                         orientation: "vertical"
-                        padding: "12dp"
-                        radius: [16, 16, 16, 16]
+                        padding: "14dp"
+                        radius: [18, 18, 18, 18]
                         elevation: 2
                         size_hint_y: None
-                        height: "140dp"
-                        md_bg_color: 0.14, 0.12, 0.2, 1
+                        height: "130dp"
+                        md_bg_color: 0.115, 0.11, 0.165, 1
                         MDLabel:
                             id: s_status_label
                             text: "Студия готова"
-                            theme_text_color: "Secondary"
+                            theme_text_color: "Custom"
+                            text_color: 0.72, 0.70, 0.82, 1
                         MDProgressBar:
                             id: s_progress
                             value: 0
@@ -302,46 +415,61 @@ MDBoxLayout:
                 MDBoxLayout:
                     orientation: "vertical"
                     padding: "16dp"
-                    spacing: "12dp"
+                    spacing: "14dp"
                     size_hint_y: None
                     height: self.minimum_height
 
-                    MDLabel:
-                        text: "Трек по своему описанию"
-                        font_style: "H6"
-
-                    MDTextField:
-                        id: p_prompt_input
-                        hint_text: "Опиши трек своими словами"
-                        mode: "rectangle"
-                        multiline: True
+                    MDCard:
+                        orientation: "vertical"
+                        padding: "16dp"
+                        radius: [18, 18, 18, 18]
+                        elevation: 3
                         size_hint_y: None
-                        height: "180dp"
-
-                    MDTextField:
-                        id: p_duration_input
-                        hint_text: "Длительность (сек)"
-                        text: "120"
-                        mode: "rectangle"
+                        height: "330dp"
+                        md_bg_color: 0.115, 0.11, 0.165, 1
+                        MDBoxLayout:
+                            orientation: "vertical"
+                            spacing: "14dp"
+                            MDLabel:
+                                text: "Опиши трек своими словами"
+                                theme_text_color: "Custom"
+                                text_color: 0.82, 0.80, 0.92, 1
+                            MDTextField:
+                                id: p_prompt_input
+                                hint_text: "Например: энергичный synthwave с мощным басом и неоновым настроением ночи"
+                                mode: "rectangle"
+                                multiline: True
+                                size_hint_y: None
+                                height: "170dp"
+                                line_color_normal: 0.30, 0.28, 0.42, 1
+                                line_color_focus: 0.4, 0.75, 0.6, 1
+                            MDTextField:
+                                id: p_duration_input
+                                hint_text: "Длительность (сек)"
+                                text: "120"
+                                mode: "rectangle"
+                                line_color_normal: 0.30, 0.28, 0.42, 1
+                                line_color_focus: 0.4, 0.75, 0.6, 1
 
                     MDRaisedButton:
                         text: "Создать трек по промпту"
                         size_hint_x: 1
-                        md_bg_color: 0.25, 0.55, 0.45, 1
+                        md_bg_color: 0.24, 0.58, 0.44, 1
                         on_release: app.start_prompt_generation()
 
                     MDCard:
                         orientation: "vertical"
-                        padding: "12dp"
-                        radius: [16, 16, 16, 16]
+                        padding: "14dp"
+                        radius: [18, 18, 18, 18]
                         elevation: 2
                         size_hint_y: None
-                        height: "140dp"
-                        md_bg_color: 0.14, 0.12, 0.2, 1
+                        height: "130dp"
+                        md_bg_color: 0.115, 0.11, 0.165, 1
                         MDLabel:
                             id: p_status_label
                             text: "Опиши идею и нажми кнопку"
-                            theme_text_color: "Secondary"
+                            theme_text_color: "Custom"
+                            text_color: 0.72, 0.70, 0.82, 1
                         MDProgressBar:
                             id: p_progress
                             value: 0
@@ -353,29 +481,36 @@ MDBoxLayout:
                     MDLabel:
                         text: "Фоновый трек для стримингов (доход)"
                         font_style: "Subtitle1"
+                        theme_text_color: "Custom"
+                        text_color: 0.82, 0.80, 0.92, 1
 
                     MDTextField:
                         id: m_niche_input
                         hint_text: "Ниша"
                         text: "Lo-Fi Study Beats"
                         mode: "rectangle"
+                        line_color_normal: 0.30, 0.28, 0.42, 1
+                        line_color_focus: 0.4, 0.75, 0.6, 1
 
                     MDTextField:
                         id: m_duration_input
                         hint_text: "Хронометраж (сек)"
                         text: "150"
                         mode: "rectangle"
+                        line_color_normal: 0.30, 0.28, 0.42, 1
+                        line_color_focus: 0.4, 0.75, 0.6, 1
 
                     MDRaisedButton:
                         text: "Создать фоновый трек"
                         size_hint_x: 1
-                        md_bg_color: 0.3, 0.5, 0.45, 1
+                        md_bg_color: 0.30, 0.50, 0.45, 1
                         on_release: app.start_money_generation()
 
                     MDLabel:
                         id: m_status_label
                         text: ""
-                        theme_text_color: "Secondary"
+                        theme_text_color: "Custom"
+                        text_color: 0.62, 0.60, 0.70, 1
                         font_style: "Caption"
 
         MDBottomNavigationItem:
@@ -387,49 +522,61 @@ MDBoxLayout:
                 MDBoxLayout:
                     orientation: "vertical"
                     padding: "16dp"
-                    spacing: "12dp"
+                    spacing: "14dp"
                     size_hint_y: None
                     height: self.minimum_height
 
-                    MDLabel:
-                        text: "Вирусный хит"
-                        font_style: "H6"
-
-                    MDTextField:
-                        id: v_hook_input
-                        hint_text: "Мемная фраза / хук"
-                        mode: "rectangle"
-
-                    MDTextField:
-                        id: v_genre_input
-                        hint_text: "Трендовый жанр"
-                        text: "Drift Phonk"
-                        mode: "rectangle"
-
-                    MDTextField:
-                        id: v_duration_input
-                        hint_text: "Время (15/30/45/60)"
-                        text: "30"
-                        mode: "rectangle"
+                    MDCard:
+                        orientation: "vertical"
+                        padding: "16dp"
+                        radius: [18, 18, 18, 18]
+                        elevation: 3
+                        size_hint_y: None
+                        height: "260dp"
+                        md_bg_color: 0.115, 0.11, 0.165, 1
+                        MDBoxLayout:
+                            orientation: "vertical"
+                            spacing: "14dp"
+                            MDTextField:
+                                id: v_hook_input
+                                hint_text: "Мемная фраза / хук"
+                                mode: "rectangle"
+                                line_color_normal: 0.30, 0.28, 0.42, 1
+                                line_color_focus: 0.85, 0.5, 0.3, 1
+                            MDTextField:
+                                id: v_genre_input
+                                hint_text: "Трендовый жанр"
+                                text: "Drift Phonk"
+                                mode: "rectangle"
+                                line_color_normal: 0.30, 0.28, 0.42, 1
+                                line_color_focus: 0.85, 0.5, 0.3, 1
+                            MDTextField:
+                                id: v_duration_input
+                                hint_text: "Время (15/30/45/60)"
+                                text: "30"
+                                mode: "rectangle"
+                                line_color_normal: 0.30, 0.28, 0.42, 1
+                                line_color_focus: 0.85, 0.5, 0.3, 1
 
                     MDRaisedButton:
                         text: "Создать вирусный дроп"
                         size_hint_x: 1
-                        md_bg_color: 0.75, 0.35, 0.22, 1
+                        md_bg_color: 0.78, 0.46, 0.20, 1
                         on_release: app.start_viral_generation()
 
                     MDCard:
                         orientation: "vertical"
-                        padding: "12dp"
-                        radius: [16, 16, 16, 16]
+                        padding: "14dp"
+                        radius: [18, 18, 18, 18]
                         elevation: 2
                         size_hint_y: None
-                        height: "140dp"
-                        md_bg_color: 0.14, 0.12, 0.2, 1
+                        height: "130dp"
+                        md_bg_color: 0.115, 0.11, 0.165, 1
                         MDLabel:
                             id: v_status_label
                             text: "Ожидание..."
-                            theme_text_color: "Secondary"
+                            theme_text_color: "Custom"
+                            text_color: 0.72, 0.70, 0.82, 1
                         MDProgressBar:
                             id: v_progress
                             value: 0
@@ -444,67 +591,81 @@ MDBoxLayout:
                 MDBoxLayout:
                     orientation: "vertical"
                     padding: "16dp"
-                    spacing: "12dp"
+                    spacing: "14dp"
                     size_hint_y: None
                     height: self.minimum_height
 
-                    MDLabel:
-                        text: "EP-Альбом"
-                        font_style: "H6"
-
-                    MDTextField:
-                        id: alb_theme_input
-                        hint_text: "Концепция альбома"
-                        mode: "rectangle"
-
-                    MDTextField:
-                        id: alb_genre_input
-                        hint_text: "Жанр"
-                        text: "melodic drum and bass"
-                        mode: "rectangle"
-
-                    MDTextField:
-                        id: alb_count_input
-                        hint_text: "Треков (3 или 4)"
-                        text: "3"
-                        mode: "rectangle"
-
-                    MDTextField:
-                        id: alb_duration_input
-                        hint_text: "Длительность трека (сек)"
-                        text: "90"
-                        mode: "rectangle"
-
-                    MDTextField:
-                        id: alb_extra_idea
-                        hint_text: "Идея дополнительного трека"
-                        mode: "rectangle"
+                    MDCard:
+                        orientation: "vertical"
+                        padding: "16dp"
+                        radius: [18, 18, 18, 18]
+                        elevation: 3
+                        size_hint_y: None
+                        height: "360dp"
+                        md_bg_color: 0.115, 0.11, 0.165, 1
+                        MDBoxLayout:
+                            orientation: "vertical"
+                            spacing: "14dp"
+                            MDTextField:
+                                id: alb_theme_input
+                                hint_text: "Концепция альбома"
+                                mode: "rectangle"
+                                line_color_normal: 0.30, 0.28, 0.42, 1
+                                line_color_focus: 0.62, 0.42, 0.9, 1
+                            MDTextField:
+                                id: alb_genre_input
+                                hint_text: "Жанр"
+                                text: "melodic drum and bass"
+                                mode: "rectangle"
+                                line_color_normal: 0.30, 0.28, 0.42, 1
+                                line_color_focus: 0.62, 0.42, 0.9, 1
+                            MDTextField:
+                                id: alb_count_input
+                                hint_text: "Треков (3 или 4)"
+                                text: "3"
+                                mode: "rectangle"
+                                line_color_normal: 0.30, 0.28, 0.42, 1
+                                line_color_focus: 0.62, 0.42, 0.9, 1
+                            MDTextField:
+                                id: alb_duration_input
+                                hint_text: "Длительность трека (сек)"
+                                text: "90"
+                                mode: "rectangle"
+                                line_color_normal: 0.30, 0.28, 0.42, 1
+                                line_color_focus: 0.62, 0.42, 0.9, 1
+                            MDTextField:
+                                id: alb_extra_idea
+                                hint_text: "Идея дополнительного трека"
+                                mode: "rectangle"
+                                line_color_normal: 0.30, 0.28, 0.42, 1
+                                line_color_focus: 0.62, 0.42, 0.9, 1
 
                     MDBoxLayout:
                         spacing: "8dp"
                         size_hint_y: None
-                        height: "48dp"
+                        height: "46dp"
                         MDRaisedButton:
                             text: "Свести EP"
-                            md_bg_color: 0.5, 0.3, 0.7, 1
+                            md_bg_color: 0.50, 0.32, 0.75, 1
                             on_release: app.start_album_generation()
                         MDRaisedButton:
                             text: "Трек в альбом"
-                            md_bg_color: 0.3, 0.55, 0.5, 1
+                            md_bg_color: 0.30, 0.50, 0.45, 1
                             on_release: app.show_add_track_dialog()
 
                     MDCard:
                         orientation: "vertical"
-                        padding: "12dp"
-                        radius: [16, 16, 16, 16]
+                        padding: "14dp"
+                        radius: [18, 18, 18, 18]
                         elevation: 2
                         size_hint_y: None
-                        height: "120dp"
-                        md_bg_color: 0.14, 0.12, 0.2, 1
+                        height: "110dp"
+                        md_bg_color: 0.115, 0.11, 0.165, 1
                         MDLabel:
                             id: alb_status_label
                             text: "Ожидание..."
-                            theme_text_color: "Secondary"
+                            theme_text_color: "Custom"
+                            text_color: 0.72, 0.70, 0.82, 1
 
         MDBottomNavigationItem:
             name: "tab_projects"
@@ -514,7 +675,7 @@ MDBoxLayout:
             MDBoxLayout:
                 orientation: "vertical"
                 padding: "12dp"
-                spacing: "8dp"
+                spacing: "10dp"
 
                 MDTextField:
                     id: search_input
@@ -522,6 +683,8 @@ MDBoxLayout:
                     mode: "rectangle"
                     size_hint_y: None
                     height: "48dp"
+                    line_color_normal: 0.30, 0.28, 0.42, 1
+                    line_color_focus: 0.62, 0.5, 0.95, 1
                     on_text: app.filter_projects(self.text)
 
                 ScrollView:
@@ -534,42 +697,54 @@ MDBoxLayout:
                         spacing: "2dp"
                         MDFlatButton:
                             text: "Все"
+                            theme_text_color: "Custom"
+                            text_color: 0.80, 0.70, 1, 1
                             on_release: app.filter_by_type("all")
                         MDFlatButton:
-                            text: "Single"
+                            text: "Сингл"
+                            theme_text_color: "Custom"
+                            text_color: 0.80, 0.70, 1, 1
                             on_release: app.filter_by_type("Single")
                         MDFlatButton:
-                            text: "Viral"
+                            text: "Хит"
+                            theme_text_color: "Custom"
+                            text_color: 0.80, 0.70, 1, 1
                             on_release: app.filter_by_type("Viral")
                         MDFlatButton:
-                            text: "EP"
+                            text: "Альбом"
+                            theme_text_color: "Custom"
+                            text_color: 0.80, 0.70, 1, 1
                             on_release: app.filter_by_type("EP")
                         MDFlatButton:
-                            text: "Money"
+                            text: "Фон"
+                            theme_text_color: "Custom"
+                            text_color: 0.80, 0.70, 1, 1
                             on_release: app.filter_by_type("Money")
                         MDFlatButton:
-                            text: "Prompt"
+                            text: "Промпт"
+                            theme_text_color: "Custom"
+                            text_color: 0.80, 0.70, 1, 1
                             on_release: app.filter_by_type("Prompt")
 
                 MDBoxLayout:
                     size_hint_y: None
-                    height: "48dp"
+                    height: "46dp"
                     spacing: "6dp"
                     MDRaisedButton:
                         text: "Обновить"
-                        md_bg_color: 0.32, 0.3, 0.42, 1
+                        md_bg_color: 0.22, 0.20, 0.32, 1
                         on_release: app.refresh_projects_ui()
                     MDRaisedButton:
                         text: "Выбрать"
-                        md_bg_color: 0.55, 0.4, 0.22, 1
+                        md_bg_color: 0.55, 0.40, 0.22, 1
                         on_release: app.toggle_selection_mode()
                     MDRaisedButton:
                         text: "Доход"
-                        md_bg_color: 0.3, 0.5, 0.45, 1
+                        md_bg_color: 0.30, 0.50, 0.45, 1
                         on_release: app.show_revenue_calculator()
                     MDRaisedButton:
                         text: "Гайд"
-                        md_bg_color: 0.32, 0.42, 0.62, 1
+                        md_bg_color: 0.28, 0.45, 0.72, 1
                         on_release: app.show_monetize_guide()
 
                 MDBoxLayout:
@@ -577,16 +752,20 @@ MDBoxLayout:
                     size_hint_y: None
                     height: "0dp"
                     spacing: "8dp"
-                    md_bg_color: 0.3, 0.12, 0.12, 1
+                    md_bg_color: 0.30, 0.12, 0.12, 1
                     MDLabel:
                         id: selection_count
                         text: "Выбрано: 0"
+                        theme_text_color: "Custom"
+                        text_color: 1, 0.85, 0.85, 1
                     MDRaisedButton:
                         text: "Удалить"
-                        md_bg_color: 0.65, 0.22, 0.22, 1
+                        md_bg_color: 0.68, 0.24, 0.24, 1
                         on_release: app.delete_selected()
                     MDFlatButton:
                         text: "Отмена"
+                        theme_text_color: "Custom"
+                        text_color: 0.85, 0.85, 0.85, 1
                         on_release: app.toggle_selection_mode()
 
                 MDScrollView:
@@ -602,122 +781,157 @@ MDBoxLayout:
                 MDBoxLayout:
                     orientation: "vertical"
                     padding: "16dp"
-                    spacing: "12dp"
+                    spacing: "14dp"
                     size_hint_y: None
                     height: self.minimum_height
 
-                    MDLabel:
-                        text: "Активация LemusAI"
-                        font_style: "H6"
-
-                    MDRaisedButton:
-                        text: "Загрузить keys.json"
-                        size_hint_x: 1
-                        md_bg_color: 0.32, 0.48, 0.75, 1
-                        on_release: app.open_file_manager("keys")
-
-                    MDLabel:
-                        text: "— или —"
-                        halign: "center"
-                        theme_text_color: "Secondary"
-
-                    MDTextField:
-                        id: master_password_input
-                        hint_text: "Пароль LemusAI (gist)"
-                        password: True
-                        mode: "rectangle"
-
-                    MDRaisedButton:
-                        text: "Активировать через gist"
-                        size_hint_x: 1
-                        md_bg_color: 0.65, 0.4, 0.22, 1
-                        on_release: app.unlock_master_keys()
-
-                    MDLabel:
-                        id: activation_status
-                        text: "Не активировано"
-                        theme_text_color: "Secondary"
-                        halign: "center"
-
-                    MDSeparator:
-                        height: "2dp"
-
-                    MDBoxLayout:
+                    MDCard:
+                        orientation: "vertical"
+                        padding: "16dp"
+                        radius: [18, 18, 18, 18]
+                        elevation: 3
                         size_hint_y: None
-                        height: "48dp"
-                        spacing: "8dp"
-                        MDLabel:
-                            text: "Указывать AI в релизах"
-                        MDSwitch:
-                            id: ai_disclose_switch
-                            active: True
-                            on_active: app.set_disclose_ai(self.active)
+                        height: "300dp"
+                        md_bg_color: 0.115, 0.11, 0.165, 1
+                        MDBoxLayout:
+                            orientation: "vertical"
+                            spacing: "14dp"
+                            MDLabel:
+                                text: "Активация LemusAI"
+                                font_style: "H6"
+                                theme_text_color: "Custom"
+                                text_color: 0.93, 0.92, 0.97, 1
+                            MDRaisedButton:
+                                text: "Загрузить keys.json"
+                                size_hint_x: 1
+                                md_bg_color: 0.28, 0.45, 0.72, 1
+                                on_release: app.open_file_manager("keys")
+                            MDLabel:
+                                text: "— или —"
+                                halign: "center"
+                                theme_text_color: "Custom"
+                                text_color: 0.62, 0.60, 0.70, 1
+                            MDTextField:
+                                id: master_password_input
+                                hint_text: "Пароль LemusAI (gist)"
+                                password: True
+                                mode: "rectangle"
+                                line_color_normal: 0.30, 0.28, 0.42, 1
+                                line_color_focus: 0.78, 0.46, 0.20, 1
+                            MDRaisedButton:
+                                text: "Активировать через gist"
+                                size_hint_x: 1
+                                md_bg_color: 0.78, 0.46, 0.20, 1
+                                on_release: app.unlock_master_keys()
+                            MDLabel:
+                                id: activation_status
+                                text: "Не активировано"
+                                theme_text_color: "Custom"
+                                text_color: 0.62, 0.60, 0.70, 1
+                                halign: "center"
 
-                    MDBoxLayout:
-                        spacing: "8dp"
+                    MDCard:
+                        orientation: "vertical"
+                        padding: "16dp"
+                        radius: [18, 18, 18, 18]
+                        elevation: 3
                         size_hint_y: None
-                        height: "48dp"
-                        MDRaisedButton:
-                            text: "Диагностика"
-                            md_bg_color: 0.55, 0.32, 0.6, 1
-                            on_release: app.run_key_diagnostics()
-                        MDRaisedButton:
-                            text: "Yandex"
-                            md_bg_color: 0.72, 0.28, 0.28, 1
-                            on_release: app.backup_to_yandex()
+                        height: "170dp"
+                        md_bg_color: 0.115, 0.11, 0.165, 1
+                        MDBoxLayout:
+                            orientation: "vertical"
+                            spacing: "12dp"
+                            MDBoxLayout:
+                                size_hint_y: None
+                                height: "44dp"
+                                spacing: "8dp"
+                                MDLabel:
+                                    text: "Указывать AI в релизах"
+                                    theme_text_color: "Custom"
+                                    text_color: 0.82, 0.80, 0.92, 1
+                                MDSwitch:
+                                    id: ai_disclose_switch
+                                    active: True
+                                    on_active: app.set_disclose_ai(self.active)
+                            MDBoxLayout:
+                                spacing: "8dp"
+                                size_hint_y: None
+                                height: "46dp"
+                                MDRaisedButton:
+                                    text: "Диагностика"
+                                    md_bg_color: 0.50, 0.32, 0.60, 1
+                                    on_release: app.run_key_diagnostics()
+                                MDRaisedButton:
+                                    text: "Резерв Yandex"
+                                    md_bg_color: 0.68, 0.24, 0.24, 1
+                                    on_release: app.backup_to_yandex()
+                            MDRaisedButton:
+                                text: "Проверить обновления"
+                                md_bg_color: 0.28, 0.38, 0.60, 1
+                                on_release: app.check_for_updates()
 
-                    MDRaisedButton:
-                        text: "Показать логи"
-                        size_hint_x: 1
-                        md_bg_color: 0.48, 0.32, 0.22, 1
-                        on_release: app.show_crash_log()
-
-                    MDRaisedButton:
-                        text: "Отправить логи"
-                        size_hint_x: 1
-                        md_bg_color: 0.32, 0.48, 0.75, 1
-                        on_release: app.send_logs_to_me()
-
-                    MDSeparator:
-                        height: "2dp"
-
-                    MDRaisedButton:
-                        text: "Проверить обновления"
-                        size_hint_x: 1
-                        md_bg_color: 0.28, 0.38, 0.6, 1
-                        on_release: app.check_for_updates()
-
-                    MDSeparator:
-                        height: "2dp"
+                    MDCard:
+                        orientation: "vertical"
+                        padding: "16dp"
+                        radius: [18, 18, 18, 18]
+                        elevation: 3
+                        size_hint_y: None
+                        height: "150dp"
+                        md_bg_color: 0.115, 0.11, 0.165, 1
+                        MDBoxLayout:
+                            orientation: "vertical"
+                            spacing: "12dp"
+                            MDRaisedButton:
+                                text: "Показать логи"
+                                md_bg_color: 0.48, 0.32, 0.22, 1
+                                on_release: app.show_crash_log()
+                            MDRaisedButton:
+                                text: "Отправить логи"
+                                md_bg_color: 0.28, 0.45, 0.72, 1
+                                on_release: app.send_logs_to_me()
 
                     MDLabel:
                         text: "Свои API-ключи (гостевой режим)"
                         font_style: "Subtitle1"
+                        theme_text_color: "Custom"
+                        text_color: 0.82, 0.80, 0.92, 1
 
                     MDTextField:
                         id: cfg_gemini
                         hint_text: "Google Gemini (добавится к списку, не стирает его)"
                         mode: "rectangle"
+                        line_color_normal: 0.30, 0.28, 0.42, 1
+                        line_color_focus: 0.62, 0.5, 0.95, 1
                     MDTextField:
                         id: cfg_openrouter
                         hint_text: "OpenRouter Key"
                         mode: "rectangle"
+                        line_color_normal: 0.30, 0.28, 0.42, 1
+                        line_color_focus: 0.62, 0.5, 0.95, 1
                     MDTextField:
                         id: cfg_yandex
                         hint_text: "Yandex Disk Token"
                         mode: "rectangle"
+                        line_color_normal: 0.30, 0.28, 0.42, 1
+                        line_color_focus: 0.62, 0.5, 0.95, 1
                     MDTextField:
                         id: cfg_hf
                         hint_text: "Hugging Face Token"
                         mode: "rectangle"
+                        line_color_normal: 0.30, 0.28, 0.42, 1
+                        line_color_focus: 0.62, 0.5, 0.95, 1
                     MDTextField:
                         id: cfg_fish
                         hint_text: "Fish.audio Token"
                         mode: "rectangle"
+                        line_color_normal: 0.30, 0.28, 0.42, 1
+                        line_color_focus: 0.62, 0.5, 0.95, 1
                     MDTextField:
                         id: cfg_groq
                         hint_text: "Groq Whisper Token"
                         mode: "rectangle"
+                        line_color_normal: 0.30, 0.28, 0.42, 1
+                        line_color_focus: 0.62, 0.5, 0.95, 1
 
                     MDRaisedButton:
                         text: "Сохранить свои ключи"
@@ -728,13 +942,14 @@ MDBoxLayout:
                     MDRaisedButton:
                         text: "Сбросить все ключи"
                         size_hint_x: 1
-                        md_bg_color: 0.55, 0.22, 0.22, 1
+                        md_bg_color: 0.68, 0.24, 0.24, 1
                         on_release: app.reset_all_keys()
 
                     MDLabel:
                         id: version_label
                         text: ""
-                        theme_text_color: "Secondary"
+                        theme_text_color: "Custom"
+                        text_color: 0.52, 0.50, 0.60, 1
                         font_style: "Caption"
                         halign: "center"
 '''
@@ -779,30 +994,30 @@ class LemusStudioApp(MDApp):
         def safe(fn, name):
             try:
                 fn()
-                _log(f"on_start: {name} ok")
+                _log(f"on_start: {name} ок")
             except Exception as e:
-                _log(f"on_start: {name} FAIL: {str(e)[:100]}")
-        safe(self._request_runtime_permissions, "perms")
-        safe(self._request_all_files_access, "files")
-        safe(self.populate_settings_fields, "settings")
-        safe(self.refresh_projects_ui, "projects")
-        safe(lambda: setattr(self.root.ids.version_label, "text", f"v{CURRENT_VERSION}"), "version")
+                _log(f"on_start: {name} ОШИБКА: {str(e)[:100]}")
+        safe(self._request_runtime_permissions, "разрешения")
+        safe(self._request_all_files_access, "доступ_к_файлам")
+        safe(self.populate_settings_fields, "поля_настроек")
+        safe(self.refresh_projects_ui, "медиатека")
+        safe(lambda: setattr(self.root.ids.version_label, "text", f"версия {CURRENT_VERSION}"), "версия")
         safe(lambda: setattr(self.root.ids.ai_disclose_switch, "active",
-             bool(self.config.get("disclose_ai", True))), "switch")
-        safe(self.update_activation_status, "status")
-        safe(lambda: self.check_for_updates(silent=True), "updates")
+             bool(self.config.get("disclose_ai", True))), "переключатель_ai")
+        safe(self.update_activation_status, "статус")
+        safe(lambda: self.check_for_updates(silent=True), "обновления")
         def _onb():
             if not os.path.exists(os.path.join(self.get_data_path(), ONBOARDING_FLAG)):
                 self.show_onboarding()
-        safe(_onb, "onboarding")
-        _log("on_start() complete")
+        safe(_onb, "онбординг")
+        _log("on_start() завершён")
 
     def _go_to_library(self):
         try:
             self.root.ids.bottom_nav.current = "tab_projects"
             self.refresh_projects_ui()
         except Exception as e:
-            _log(f"go_to_library: {e}")
+            _log(f"переход в медиатеку: {e}")
 
     def _request_runtime_permissions(self):
         if platform != "android":
@@ -816,7 +1031,7 @@ class LemusStudioApp(MDApp):
                 Permission.POST_NOTIFICATIONS,
             ])
         except Exception as e:
-            _log(f"perms error: {e}")
+            _log(f"разрешения: {e}")
 
     def _request_all_files_access(self):
         if platform != "android":
@@ -836,7 +1051,7 @@ class LemusStudioApp(MDApp):
                 intent.setData(Uri.parse("package:" + activity.getPackageName()))
                 activity.startActivity(intent)
         except Exception as e:
-            _log(f"files error: {e}")
+            _log(f"доступ к файлам: {e}")
 
     # ===== ХРАНИЛИЩЕ / ДАННЫЕ =====
     def get_data_path(self):
@@ -849,6 +1064,9 @@ class LemusStudioApp(MDApp):
 
     def _migrate_old_data(self):
         sources = [self.user_data_dir, get_storage_root(), "."]
+        p = _android_private()
+        if p:
+            sources.append(p)
         for src_dir in sources:
             for fname in [CONFIG_FILE, PROJECTS_FILE, HISTORY_FILE, ONBOARDING_FLAG]:
                 for cand in [os.path.join(src_dir, fname), os.path.join(src_dir, ".data", fname)]:
@@ -894,7 +1112,7 @@ class LemusStudioApp(MDApp):
             with open(os.path.join(self.get_data_path(), PROJECTS_FILE), "w", encoding="utf-8") as f:
                 json.dump(self.projects, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            toast(f"Ошибка БД: {str(e)[:40]}")
+            toast(f"Ошибка базы: {str(e)[:40]}")
 
     def load_history(self):
         p = os.path.join(self.get_data_path(), HISTORY_FILE)
@@ -914,7 +1132,13 @@ class LemusStudioApp(MDApp):
         except Exception:
             pass
 
-    # ===== ПЛЕЕР =====
+    # ===== ПЛЕЕР (плавно) =====
+    def _player_show(self):
+        Animation(height=dp(56), d=0.22, t="out_quad").start(self.root.ids.player_bar)
+
+    def _player_hide(self):
+        Animation(height=dp(0), d=0.18, t="in_quad").start(self.root.ids.player_bar)
+
     def play_item(self, item):
         if item in self.last_rendered_items:
             idx = self.last_rendered_items.index(item)
@@ -939,7 +1163,7 @@ class LemusStudioApp(MDApp):
         self.active_sound = SoundLoader.load(path)
         if self.active_sound:
             self.active_sound.play()
-            self.root.ids.player_bar.height = dp(56)
+            self._player_show()
             self.root.ids.player_title.text = item.get("title", "")
             self.root.ids.player_play_btn.icon = "pause"
             if self._pos_event is None:
@@ -989,7 +1213,7 @@ class LemusStudioApp(MDApp):
         if self._pos_event:
             Clock.unschedule(self._pos_event)
             self._pos_event = None
-        self.root.ids.player_bar.height = dp(0)
+        self._player_hide()
         self.root.ids.player_title.text = ""
         self.root.ids.player_pos.text = "0:00"
 
@@ -1001,9 +1225,9 @@ class LemusStudioApp(MDApp):
         if not t:
             toast("Укажи тему!")
             return
-        self.add_to_history("Single", f"{t} / {g} / {d}с")
-        self.root.ids.s_status_label.text = "Gemini работает..."
-        threading.Thread(target=self._worker_track, args=(t, g, int(d), "Single",
+        self.add_to_history("Сингл", f"{t} / {g} / {d}с")
+        self.root.ids.s_status_label.text = "Gemini пишет..."
+        threading.Thread(target=self._worker_track, args=(t, g, int(d), "Сингл",
             self.root.ids.s_status_label, self.root.ids.s_progress)).start()
 
     def start_viral_generation(self):
@@ -1013,12 +1237,12 @@ class LemusStudioApp(MDApp):
         if not h:
             toast("Укажи хук!")
             return
-        self.add_to_history("Viral", f"Хук: {h} / {g} / {d}с")
+        self.add_to_history("Хит", f"Хук: {h} / {g} / {d}с")
         prompt = (f"Вирусный хит TikTok/Reels {d}с. Хук: '{h}'. Жанр: {g}. "
                   "0-3с вовлечение, дроп, loop. JSON: title, lyrics, music_prompt, cover_prompt, bpm.")
-        self.root.ids.v_status_label.text = "Gemini работает..."
+        self.root.ids.v_status_label.text = "Gemini пишет..."
         threading.Thread(target=self._worker_generic,
-            args=(prompt, g, int(d), "Viral", "Хит", self.root.ids.v_status_label, self.root.ids.v_progress)).start()
+            args=(prompt, g, int(d), "Хит", self.root.ids.v_status_label, self.root.ids.v_progress)).start()
 
     def start_prompt_generation(self):
         prompt_text = self.root.ids.p_prompt_input.text.strip()
@@ -1026,13 +1250,13 @@ class LemusStudioApp(MDApp):
         if not prompt_text:
             toast("Опиши свою идею!")
             return
-        self.add_to_history("Prompt", f"{prompt_text[:100]} / {dur}с")
+        self.add_to_history("Промпт", f"{prompt_text[:100]} / {dur}с")
         prompt = (f"Создай трек по описанию: {prompt_text}. Длительность {dur}с. "
                   "Ставь ударения через + перед ударной гласной. "
                   "JSON: title, lyrics, music_prompt, cover_prompt, bpm.")
-        self.root.ids.p_status_label.text = "Gemini работает..."
+        self.root.ids.p_status_label.text = "Gemini пишет..."
         threading.Thread(target=self._worker_generic,
-            args=(prompt, "custom", dur, "Prompt", "Промпт", self.root.ids.p_status_label, self.root.ids.p_progress)).start()
+            args=(prompt, "custom", dur, "Промпт", self.root.ids.p_status_label, self.root.ids.p_progress)).start()
 
     def start_money_generation(self):
         n = self.root.ids.m_niche_input.text.strip()
@@ -1040,12 +1264,12 @@ class LemusStudioApp(MDApp):
         if not n:
             toast("Укажи нишу!")
             return
-        self.add_to_history("Money", f"Ниша: {n} / {d}с")
+        self.add_to_history("Фон", f"Ниша: {n} / {d}с")
         prompt = (f"Фоновый монетизируемый трек. Ниша: '{n}'. {d}с. Loop-friendly. "
                   "JSON: title, music_prompt, cover_prompt, bpm.")
-        self.root.ids.m_status_label.text = "Gemini работает..."
+        self.root.ids.m_status_label.text = "Gemini пишет..."
         threading.Thread(target=self._worker_generic,
-            args=(prompt, n, int(d), "Money", "Фон", self.root.ids.m_status_label, None)).start()
+            args=(prompt, n, int(d), "Фон", self.root.ids.m_status_label, None)).start()
 
     def start_album_generation(self):
         theme = self.root.ids.alb_theme_input.text.strip()
@@ -1055,8 +1279,8 @@ class LemusStudioApp(MDApp):
         if not theme:
             toast("Укажи концепцию!")
             return
-        self.add_to_history("EP", f"{theme} / {genre} / {cnt}x{dur}с")
-        self.root.ids.alb_status_label.text = "Gemini работает..."
+        self.add_to_history("Альбом", f"{theme} / {genre} / {cnt}x{dur}с")
+        self.root.ids.alb_status_label.text = "Gemini пишет..."
         threading.Thread(target=self._worker_album, args=(theme, genre, cnt, dur)).start()
 
     def _worker_track(self, title, genre, dur, rtype, label, prog):
@@ -1064,9 +1288,10 @@ class LemusStudioApp(MDApp):
         prompt = (f"Трек {dur}с. Жанр: {genre}. Идея: {title}. {demo} "
                   "Ставь ударения через + перед ударной гласной. "
                   "JSON: title, lyrics, music_prompt, cover_prompt, bpm.")
-        self._worker_generic(prompt, genre, dur, rtype, "Сингл", label, prog)
+        self._worker_generic(prompt, genre, dur, rtype, label, prog)
 
-    def _worker_generic(self, prompt, genre, duration, rtype, emoji, label, prog):
+    def _worker_generic(self, prompt, genre, duration, rtype, label, prog):
+        notes = []
         try:
             Clock.schedule_once(lambda dt: self._update_progress(label, prog, "Gemini пишет...", 10), 0)
             llm = self._producer_with_critic(prompt)
@@ -1076,12 +1301,16 @@ class LemusStudioApp(MDApp):
             crit = llm.get("_critic") or {}
             total = crit.get("total", "—")
             verdict = crit.get("verdict", "release")
+            if not llm.get("_real"):
+                notes.append("ключи не ответили")
 
             Clock.schedule_once(lambda dt: self._update_progress(label, prog, "Обложка 3000x3000...", 30), 0)
             cover = self._generate_image(llm.get("cover_prompt", f"{genre} cover"))
 
             Clock.schedule_once(lambda dt: self._update_progress(label, prog, f"Синтез ({duration}с)...", 50), 0)
-            audio = self._generate_audio_chunk(music_prompt, duration)
+            audio, audio_src = self._generate_audio_chunk(music_prompt, duration)
+            if audio_src == "proc":
+                notes.append("музыка синтезирована на устройстве")
 
             if lyrics and self.current_voice_sample:
                 Clock.schedule_once(lambda dt: self._update_progress(label, prog, "Клон голоса...", 70), 0)
@@ -1096,7 +1325,7 @@ class LemusStudioApp(MDApp):
 
             with open(mp3_p, "wb") as f:
                 f.write(audio)
-            self._write_wav(wav_p, audio, duration)
+            self._write_wav(wav_p, audio, duration, seed=title + music_prompt)
             if cover:
                 with open(cover_p, "wb") as f:
                     f.write(cover)
@@ -1104,7 +1333,7 @@ class LemusStudioApp(MDApp):
 
             self.projects.insert(0, {
                 "id": f"p_{int(time.time()*1000)}",
-                "title": title, "genre": genre, "type": f"{rtype} ({duration}s)",
+                "title": title, "genre": genre, "type": f"{rtype} ({duration}с)",
                 "mp3_path": mp3_p, "wav_path": wav_p,
                 "cover_path": cover_p if cover else None,
                 "lyrics": lyrics,
@@ -1115,10 +1344,12 @@ class LemusStudioApp(MDApp):
             })
             self.save_projects()
 
-            Clock.schedule_once(lambda dt: self._update_progress(label, prog,
-                f"Готово! Критик: {total}/10 ({verdict})", 100), 0)
+            msg = f"Готово! Критик: {total}/10"
+            if notes:
+                msg += " (" + "; ".join(notes) + ")"
+            Clock.schedule_once(lambda dt: self._update_progress(label, prog, msg, 100), 0)
             Clock.schedule_once(lambda dt: self._go_to_library(), 0)
-            Clock.schedule_once(lambda dt: toast(f"{title} готов! Смотри в Медиатеке"), 0)
+            Clock.schedule_once(lambda dt: toast(f"{title}: готово! Смотри в Медиатеке"), 0)
             self._send_notification("Lemus Studio", f"{title} готов!")
         except Exception as e:
             traceback.print_exc()
@@ -1144,18 +1375,18 @@ class LemusStudioApp(MDApp):
                     f.write(cover)
             for i, t in enumerate(llm.get("tracks", [])[:cnt]):
                 Clock.schedule_once(lambda dt, x=i: setattr(self.root.ids.alb_status_label, "text", f"Трек {x+1}/{cnt}..."), 0)
-                aud = self._generate_audio_chunk(t.get("music_prompt", genre), dur)
+                aud, src = self._generate_audio_chunk(t.get("music_prompt", genre), dur)
                 safe = re.sub(r"[^\w]", "_", t.get("title", "track"))[:40]
                 mp3_p = os.path.join(storage, f"{album}_0{i+1}_{safe}.mp3")
                 wav_p = os.path.join(storage, f"{album}_0{i+1}_Master.wav")
                 with open(mp3_p, "wb") as f:
                     f.write(aud)
-                self._write_wav(wav_p, aud, dur)
+                self._write_wav(wav_p, aud, dur, seed=album + str(i))
                 self._inject_id3(mp3_p, t.get("title", "Track"), album, genre, cover)
                 self.projects.insert(0, {
                     "id": f"p_{int(time.time()*1000)}_{i}",
                     "title": f"[{album}] {t.get('title')}", "genre": genre,
-                    "type": f"EP ({dur}s)", "mp3_path": mp3_p, "wav_path": wav_p,
+                    "type": f"Альбом ({dur}с)", "mp3_path": mp3_p, "wav_path": wav_p,
                     "cover_path": cover_p if cover else None,
                     "album_id": album_id, "album_title": album,
                     "lyrics": t.get("lyrics", ""),
@@ -1166,6 +1397,42 @@ class LemusStudioApp(MDApp):
             Clock.schedule_once(lambda dt: setattr(self.root.ids.alb_status_label, "text", f"Альбом '{album}' готов!"), 0)
             Clock.schedule_once(lambda dt: self._go_to_library(), 0)
             self._send_notification("Lemus Studio", f"Альбом '{album}' готов!")
+        except Exception as e:
+            Clock.schedule_once(lambda dt: setattr(self.root.ids.alb_status_label, "text", f"Ошибка: {str(e)[:80]}"), 0)
+
+    def _worker_add_track(self, album, idea, dur):
+        try:
+            genre = album.get("genre", "")
+            theme = idea or f"продолжение альбома '{album['title']}'"
+            demo = f"Голос: {os.path.basename(self.current_voice_sample)}." if self.current_voice_sample else ""
+            prompt = (f"Трек {dur}с для альбома '{album['title']}' (жанр: {genre}). Тема: {theme}. {demo} "
+                      "JSON: title, lyrics, music_prompt, cover_prompt, bpm.")
+            llm = self._producer_with_critic(prompt)
+            title = llm.get("title", "Track")
+            audio, src = self._generate_audio_chunk(llm.get("music_prompt", genre), dur)
+            storage = get_storage_root()
+            safe = re.sub(r"[^\w]", "_", title)[:40]
+            n = album["tracks"] + 1
+            mp3_p = os.path.join(storage, f"{album['title']}_0{n}_{safe}.mp3")
+            wav_p = os.path.join(storage, f"{album['title']}_0{n}_Master.wav")
+            with open(mp3_p, "wb") as f:
+                f.write(audio)
+            self._write_wav(wav_p, audio, dur, seed=title)
+            self._inject_id3(mp3_p, title, album["title"], genre, None)
+            self.projects.insert(0, {
+                "id": f"p_{int(time.time()*1000)}",
+                "title": f"[{album['title']}] {title}", "genre": genre,
+                "type": f"Альбом ({dur}с)", "album_id": album["album_id"],
+                "album_title": album["title"],
+                "mp3_path": mp3_p, "wav_path": wav_p,
+                "cover_path": album.get("cover_path"),
+                "lyrics": llm.get("lyrics", ""),
+                "ai_disclose": bool(self.config.get("disclose_ai", True)),
+                "date": time.strftime("%Y-%m-%d %H:%M"),
+            })
+            self.save_projects()
+            Clock.schedule_once(lambda dt: setattr(self.root.ids.alb_status_label, "text", f"'{title}' добавлен!"), 0)
+            Clock.schedule_once(lambda dt: self._go_to_library(), 0)
         except Exception as e:
             Clock.schedule_once(lambda dt: setattr(self.root.ids.alb_status_label, "text", f"Ошибка: {str(e)[:80]}"), 0)
 
@@ -1202,48 +1469,110 @@ class LemusStudioApp(MDApp):
         self.root.ids.alb_status_label.text = "Gemini пишет трек..."
         threading.Thread(target=self._worker_add_track, args=(album, idea, dur)).start()
 
-    def _worker_add_track(self, album, idea, dur):
+    # ===== ИСТОЧНИКИ ЗВУКА / ИЗОБРАЖЕНИЯ =====
+    def _generate_image(self, prompt):
         try:
-            genre = album.get("genre", "")
-            theme = idea or f"продолжение альбома '{album['title']}'"
-            demo = f"Голос: {os.path.basename(self.current_voice_sample)}." if self.current_voice_sample else ""
-            prompt = (f"Трек {dur}с для альбома '{album['title']}' (жанр: {genre}). Тема: {theme}. {demo} "
-                      "JSON: title, lyrics, music_prompt, cover_prompt, bpm.")
-            llm = self._producer_with_critic(prompt)
-            title = llm.get("title", "Track")
-            audio = self._generate_audio_chunk(llm.get("music_prompt", genre), dur)
-            storage = get_storage_root()
-            safe = re.sub(r"[^\w]", "_", title)[:40]
-            n = album["tracks"] + 1
-            mp3_p = os.path.join(storage, f"{album['title']}_0{n}_{safe}.mp3")
-            wav_p = os.path.join(storage, f"{album['title']}_0{n}_Master.wav")
-            with open(mp3_p, "wb") as f:
-                f.write(audio)
-            self._write_wav(wav_p, audio, dur)
-            self._inject_id3(mp3_p, title, album["title"], genre, None)
-            self.projects.insert(0, {
-                "id": f"p_{int(time.time()*1000)}",
-                "title": f"[{album['title']}] {title}", "genre": genre,
-                "type": f"EP ({dur}s)", "album_id": album["album_id"],
-                "album_title": album["title"],
-                "mp3_path": mp3_p, "wav_path": wav_p,
-                "cover_path": album.get("cover_path"),
-                "lyrics": llm.get("lyrics", ""),
-                "ai_disclose": bool(self.config.get("disclose_ai", True)),
-                "date": time.strftime("%Y-%m-%d %H:%M"),
-            })
-            self.save_projects()
-            Clock.schedule_once(lambda dt: setattr(self.root.ids.alb_status_label, "text", f"'{title}' добавлен!"), 0)
-            Clock.schedule_once(lambda dt: self._go_to_library(), 0)
+            enc = urllib.parse.quote(prompt[:180])
+            url = f"https://image.pollinations.ai/prompt/{enc}?width=3000&height=3000&nologo=true"
+            req = urllib.request.Request(url, headers={"User-Agent": "LemusStudio/5.4"})
+            with urllib.request.urlopen(req, timeout=60) as r:
+                d = r.read()
+                if len(d) > 5000:
+                    return d
         except Exception as e:
-            Clock.schedule_once(lambda dt: setattr(self.root.ids.alb_status_label, "text", f"Ошибка: {str(e)[:80]}"), 0)
+            print(f"Обложка: {e}")
+        return None
 
-    # ===== LLM / API =====
+    def _generate_audio_chunk(self, prompt, duration):
+        hf = self.config.get("hf_token")
+        if hf:
+            for url in ["https://router.huggingface.co/hf-inference/models/facebook/musicgen-small",
+                        "https://api-inference.huggingface.co/models/facebook/musicgen-small"]:
+                try:
+                    headers = {"Authorization": f"Bearer {hf}", "Content-Type": "application/json"}
+                    payload = json.dumps({"inputs": prompt[:160], "parameters": {"duration": min(duration, 30)}}).encode()
+                    req = urllib.request.Request(url, data=payload, headers=headers)
+                    with urllib.request.urlopen(req, timeout=90) as r:
+                        d = r.read()
+                        if _looks_like_audio(d):
+                            return d, "hf"
+                except Exception as e:
+                    print(f"HF: {e}")
+        try:
+            enc = urllib.parse.quote(prompt[:160])
+            req = urllib.request.Request(f"https://audio.pollinations.ai/prompt/{enc}",
+                                          headers={"User-Agent": "LemusStudio/5.4"})
+            with urllib.request.urlopen(req, timeout=60) as r:
+                d = r.read()
+                if _looks_like_audio(d):
+                    return d, "poll"
+        except Exception as e:
+            print(f"Poll: {e}")
+        return _procedural_wav(duration, prompt), "proc"
+
+    def _write_wav(self, path, audio, dur, seed=""):
+        try:
+            if audio[:4] == b"RIFF":
+                with open(path, "wb") as f:
+                    f.write(audio)
+                return
+        except Exception:
+            pass
+        done = False
+        if shutil.which("ffmpeg"):
+            try:
+                tmp = path + ".tmp"
+                with open(tmp, "wb") as f:
+                    f.write(audio)
+                import subprocess
+                r = subprocess.run(["ffmpeg", "-y", "-i", tmp, "-ar", "44100", "-ac", "2",
+                                    "-c:a", "pcm_s16le", path],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                try: os.remove(tmp)
+                except Exception: pass
+                done = (r.returncode == 0 and os.path.exists(path))
+            except Exception:
+                pass
+        if not done:
+            with open(path, "wb") as f:
+                f.write(_procedural_wav(dur, seed or "lemus"))
+
+    def _convert_format(self, src, dst, codec_args):
+        if not shutil.which("ffmpeg"):
+            return False
+        try:
+            import subprocess
+            r = subprocess.run(["ffmpeg", "-y", "-i", src] + codec_args + [dst],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return r.returncode == 0 and os.path.exists(dst)
+        except Exception:
+            return False
+
+    def _inject_id3(self, mp3_path, title, artist, genre, cover):
+        try:
+            from mutagen.mp3 import MP3
+            from mutagen.id3 import ID3, TIT2, TPE1, TALB, TCON, TDRC, APIC
+            audio = MP3(mp3_path, ID3=ID3)
+            try: audio.add_tags()
+            except Exception: pass
+            audio.tags.add(TIT2(encoding=3, text=title))
+            audio.tags.add(TPE1(encoding=3, text=artist))
+            audio.tags.add(TALB(encoding=3, text=title))
+            audio.tags.add(TDRC(encoding=3, text="2026"))
+            if genre:
+                audio.tags.add(TCON(encoding=3, text=genre))
+            if cover:
+                audio.tags.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="Cover", data=cover))
+            audio.save()
+        except Exception as e:
+            print(f"ID3: {e}")
+
     def _prepare_lyrics_for_tts(self, lyrics):
         if not lyrics:
             return ""
         return re.sub(r"[ \t]+", " ", lyrics.replace("+", "")).strip()
 
+    # ===== LLM =====
     def _call_gemini_native(self, prompt, api_key, model=None):
         model = model or self.config.get("gemini_model", "gemini-2.5-flash")
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -1254,7 +1583,7 @@ class LemusStudioApp(MDApp):
         }
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=45) as r:
+        with urllib.request.urlopen(req, timeout=30) as r:
             res = json.loads(r.read().decode("utf-8"))
             return self._clean_json(res["candidates"][0]["content"]["parts"][0]["text"])
 
@@ -1284,6 +1613,7 @@ class LemusStudioApp(MDApp):
                 try:
                     res = self._call_gemini_native(user_prompt, key, model=model)
                     if isinstance(res, dict):
+                        res["_real"] = True
                         return res
                 except urllib.error.HTTPError as e:
                     if e.code in (400, 401, 403):
@@ -1307,16 +1637,18 @@ class LemusStudioApp(MDApp):
                                              data=payload, headers=headers)
                 with urllib.request.urlopen(req, timeout=60) as r:
                     res = json.loads(r.read().decode())
-                    return self._clean_json(res["choices"][0]["message"]["content"])
+                    out = self._clean_json(res["choices"][0]["message"]["content"])
+                    out["_real"] = True
+                    return out
             except Exception as e:
                 print(f"OpenRouter: {str(e)[:60]}")
-        return {"title": "Track", "music_prompt": "electronic beat", "cover_prompt": "album cover",
-                "lyrics": "", "bpm": 120}
+        return {"title": "Инструментал", "music_prompt": "melodic electronic beat",
+                "cover_prompt": "album cover", "lyrics": "", "bpm": 120, "_real": False}
 
     def _run_critic(self, meta):
         try:
             return self._call_llm_json(
-                f"Критик. Оцени: {json.dumps(meta, ensure_ascii=False)}\n"
+                f"Критик. Оцени: {json.dumps({k: v for k, v in meta.items() if not k.startswith('_')}, ensure_ascii=False)}\n"
                 'JSON: {"scores":{"lyrics":N,"structure":N,"production":N,"commercial":N},'
                 '"total":N.N,"verdict":"release"|"revise","fixes":""}')
         except Exception:
@@ -1324,16 +1656,19 @@ class LemusStudioApp(MDApp):
 
     def _producer_with_critic(self, prompt):
         meta = self._call_llm_json(prompt)
+        real = meta.get("_real")
         if not isinstance(meta, dict) or not meta.get("music_prompt"):
             return meta
-        crit = self._run_critic(meta)
-        total = crit.get("total") or 10
-        if crit.get("verdict") == "revise" and total < 7.0:
-            meta2 = self._call_llm_json(prompt + f"\n\nЗАМЕЧАНИЯ: {crit.get('fixes','')}")
-            if isinstance(meta2, dict) and meta2.get("music_prompt"):
-                meta = meta2
-                crit = self._run_critic(meta)
-        meta["_critic"] = crit
+        if real:
+            crit = self._run_critic(meta)
+            total = crit.get("total") or 10
+            if crit.get("verdict") == "revise" and total < 7.0:
+                meta2 = self._call_llm_json(prompt + f"\n\nЗАМЕЧАНИЯ: {crit.get('fixes','')}")
+                if isinstance(meta2, dict) and meta2.get("music_prompt"):
+                    meta = meta2
+                    crit = self._run_critic(meta)
+            meta["_critic"] = crit
+        meta["_real"] = real
         return meta
 
     def _fish_clone(self, lyrics, sample_path):
@@ -1371,110 +1706,6 @@ class LemusStudioApp(MDApp):
             print(f"Fish: {e}")
             return None
 
-    def _generate_image(self, prompt):
-        try:
-            enc = urllib.parse.quote(prompt[:180])
-            url = f"https://image.pollinations.ai/prompt/{enc}?width=3000&height=3000&nologo=true"
-            req = urllib.request.Request(url, headers={"User-Agent": "LemusStudio/5.3"})
-            with urllib.request.urlopen(req, timeout=60) as r:
-                return r.read()
-        except Exception:
-            return None
-
-    def _generate_audio_chunk(self, prompt, duration):
-        hf = self.config.get("hf_token")
-        if hf:
-            try:
-                url = "https://router.huggingface.co/hf-inference/models/facebook/musicgen-small"
-                headers = {"Authorization": f"Bearer {hf}", "Content-Type": "application/json"}
-                payload = json.dumps({"inputs": prompt[:160], "parameters": {"duration": min(duration, 30)}}).encode()
-                req = urllib.request.Request(url, data=payload, headers=headers)
-                with urllib.request.urlopen(req, timeout=90) as r:
-                    d = r.read()
-                    if len(d) > 5000:
-                        return d
-            except Exception as e:
-                print(f"HF: {e}")
-        try:
-            enc = urllib.parse.quote(prompt[:160])
-            req = urllib.request.Request(f"https://audio.pollinations.ai/prompt/{enc}",
-                                          headers={"User-Agent": "LemusStudio/5.3"})
-            with urllib.request.urlopen(req, timeout=60) as r:
-                d = r.read()
-                if len(d) > 5000:
-                    return d
-        except Exception as e:
-            print(f"Poll: {e}")
-        return self._fallback_sound(duration)
-
-    def _fallback_sound(self, dur):
-        buf = io.BytesIO()
-        with wave.open(buf, "wb") as w:
-            w.setnchannels(2)
-            w.setsampwidth(2)
-            w.setframerate(44100)
-            raw = bytearray()
-            for i in range(int(44100 * min(dur, 30))):
-                v = int(10000 * math.sin(2 * math.pi * 220 * (i / 44100)))
-                raw += struct.pack("<hh", v, v)
-            w.writeframes(raw)
-        return buf.getvalue()
-
-    def _write_wav(self, path, audio, dur):
-        try:
-            tmp = path + ".tmp.mp3"
-            with open(tmp, "wb") as f:
-                f.write(audio)
-            import subprocess
-            r = subprocess.run(["ffmpeg", "-y", "-i", tmp, "-ar", "44100", "-ac", "2",
-                                "-c:a", "pcm_s16le", path],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            try: os.remove(tmp)
-            except Exception: pass
-            if r.returncode == 0 and os.path.exists(path):
-                return
-        except Exception:
-            pass
-        with wave.open(path, "wb") as w:
-            w.setnchannels(2)
-            w.setsampwidth(2)
-            w.setframerate(44100)
-            raw = bytearray()
-            for i in range(int(44100 * dur)):
-                v = int(12000 * math.sin(2 * math.pi * 440 * (i / 44100)))
-                raw += struct.pack("<hh", v, v)
-            w.writeframes(raw)
-
-    def _convert_format(self, src, dst, codec_args):
-        if not shutil.which("ffmpeg"):
-            return False
-        try:
-            import subprocess
-            r = subprocess.run(["ffmpeg", "-y", "-i", src] + codec_args + [dst],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return r.returncode == 0 and os.path.exists(dst)
-        except Exception:
-            return False
-
-    def _inject_id3(self, mp3_path, title, artist, genre, cover):
-        try:
-            from mutagen.mp3 import MP3
-            from mutagen.id3 import ID3, TIT2, TPE1, TALB, TCON, TDRC, APIC
-            audio = MP3(mp3_path, ID3=ID3)
-            try: audio.add_tags()
-            except Exception: pass
-            audio.tags.add(TIT2(encoding=3, text=title))
-            audio.tags.add(TPE1(encoding=3, text=artist))
-            audio.tags.add(TALB(encoding=3, text=title))
-            audio.tags.add(TDRC(encoding=3, text="2026"))
-            if genre:
-                audio.tags.add(TCON(encoding=3, text=genre))
-            if cover:
-                audio.tags.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="Cover", data=cover))
-            audio.save()
-        except Exception as e:
-            print(f"ID3: {e}")
-
     # ===== МЕДИАТЕКА =====
     def toggle_selection_mode(self):
         self.selection_mode = not self.selection_mode
@@ -1505,19 +1736,21 @@ class LemusStudioApp(MDApp):
         container = self.root.ids.projects_list_container
         container.clear_widgets()
         rendered = []
+        ru = {"Single": "Сингл", "Viral": "Хит", "EP": "Альбом", "Money": "Фон", "Prompt": "Промпт"}
         for item in self.projects:
             title = item.get("title", "")
             genre = item.get("genre", "")
             itype = item.get("type", "")
             if filter_text and filter_text.lower() not in title.lower() and filter_text.lower() not in genre.lower():
                 continue
-            if filter_type != "all" and filter_type not in itype:
-                continue
+            if filter_type != "all":
+                if not (itype.startswith(ru.get(filter_type, filter_type)) or filter_type in itype):
+                    continue
             rendered.append(item)
             pid = item.get("id") or item.get("mp3_path")
             li = TwoLineAvatarIconListItem(text=title,
                 secondary_text=f"{genre} • {itype} • {item.get('date','')}"
-                              + (f" • {item.get('critic_total','—')}" if item.get("critic_total") else ""))
+                              + (f" • критик {item.get('critic_total','—')}" if item.get("critic_total") else ""))
             if self.selection_mode:
                 cb = CheckboxLeftWidget(active=pid in self.selected_ids)
                 cb.bind(active=lambda a, v, it=item: self._toggle_select(it))
@@ -1564,9 +1797,9 @@ class LemusStudioApp(MDApp):
             toast(f"Удалено: {n}")
         dlg = MDDialog(
             title="Подтверждение",
-            text=f"Удалить треков: {n}?\nФайлы будут стёрты.",
+            text=f"Удалить треков: {n}?\nФайлы будут стёрты безвозвратно.",
             buttons=[MDFlatButton(text="Отмена", on_release=lambda i: dlg.dismiss()),
-                     MDRaisedButton(text="Удалить", md_bg_color=(0.7, 0.2, 0.2, 1), on_release=do_delete)])
+                     MDRaisedButton(text="Удалить", md_bg_color=(0.68, 0.24, 0.24, 1), on_release=do_delete)])
         dlg.open()
 
     def delete_selected(self):
@@ -1594,7 +1827,7 @@ class LemusStudioApp(MDApp):
                 intent.putExtra(Intent.EXTRA_SUBJECT, item.get("title", "Track"))
                 PythonActivity.mActivity.startActivity(Intent.createChooser(intent, "Поделиться"))
             except Exception as e:
-                toast(f"Share: {str(e)[:50]}")
+                toast(f"Ошибка отправки: {str(e)[:50]}")
         else:
             toast(f"Файл: {mp3}")
 
@@ -1605,16 +1838,16 @@ class LemusStudioApp(MDApp):
                  "WAV 44.1/16 (мастер)",
                  "MP3 320 kbps",
                  ("FLAC 44.1/16" if has_ff else "FLAC (нужен ffmpeg)"),
-                 ("MP3 256/192" if has_ff else "MP3 256/192 (ffmpeg)"),
-                 ("AAC/m4a 256" if has_ff else "AAC/m4a (ffmpeg)"),
-                 "ZIP-пакет"]
+                 ("MP3 256/192" if has_ff else "MP3 256/192 (нужен ffmpeg)"),
+                 ("AAC/m4a 256" if has_ff else "AAC/m4a (нужен ffmpeg)"),
+                 "ZIP-пакет дистрибьютора"]
         buttons = [
             MDRaisedButton(text="ZIP-пакет",
                 on_release=lambda i, it=item: (self._dismiss_export(), self.export_project_zip(it))),
             MDFlatButton(text="Закрыть", on_release=lambda i: self._dismiss_export()),
         ]
         if has_ff and wav:
-            buttons.insert(0, MDRaisedButton(text="FLAC+m4a", md_bg_color=(0.3, 0.6, 0.5, 1),
+            buttons.insert(0, MDRaisedButton(text="FLAC+m4a", md_bg_color=(0.30, 0.50, 0.45, 1),
                 on_release=lambda i, it=item: (self._dismiss_export(), self._export_extra(it))))
         self.export_dialog = MDDialog(title="Экспорт", text="\n".join(lines), buttons=buttons)
         self.export_dialog.open()
@@ -1638,7 +1871,7 @@ class LemusStudioApp(MDApp):
                 made.append("MP3-256")
             if self._convert_format(mp3, base + "_192.mp3", ["-b:a", "192k"]):
                 made.append("MP3-192")
-        toast("Создано: " + (", ".join(made) if made else "ничего"))
+        toast("Создано: " + (", ".join(made) if made else "ничего (нужен ffmpeg)"))
 
     def export_project_zip(self, item):
         try:
@@ -1662,11 +1895,11 @@ class LemusStudioApp(MDApp):
                 press = (f"ПРЕСС-РЕЛИЗ\n\n{item.get('title','')} — новый сингл Anton Lemus.\n"
                          f"Жанр: {item.get('genre','')}. Дата: {item.get('date','')}.\n")
                 zf.writestr("press_release.txt", press)
-            toast(f"ZIP: {os.path.basename(zip_p)}")
+            toast(f"ZIP готов: {os.path.basename(zip_p)}")
         except Exception as e:
-            toast(f"ZIP: {str(e)[:50]}")
+            toast(f"Ошибка ZIP: {str(e)[:50]}")
 
-    # ===== АКТИВАЦИЯ / КЛЮЧИ =====
+    # ===== КЛЮЧИ / АКТИВАЦИЯ =====
     def _import_keys_from_json(self, path):
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -1694,9 +1927,9 @@ class LemusStudioApp(MDApp):
             self.populate_settings_fields()
             self.update_activation_status()
             n = len(self.config.get("gemini_keys", []))
-            toast(f"Ключи загружены! ({n} Gemini)")
+            toast(f"Ключи загружены! Gemini: {n}")
         except json.JSONDecodeError:
-            toast("Ошибка парсинга JSON")
+            toast("Ошибка разбора JSON")
         except Exception as e:
             toast(f"Ошибка: {str(e)[:50]}")
 
@@ -1711,7 +1944,7 @@ class LemusStudioApp(MDApp):
     def _fetch_remote_keys_thread(self):
         try:
             req = urllib.request.Request(REMOTE_KEYS_URL,
-                headers={"User-Agent": "LemusStudio/5.3", "Accept": "application/json"})
+                headers={"User-Agent": "LemusStudio/5.4", "Accept": "application/json"})
             with urllib.request.urlopen(req, timeout=15) as r:
                 remote = json.loads(r.read().decode("utf-8"))
             for k, v in remote.items():
@@ -1731,7 +1964,7 @@ class LemusStudioApp(MDApp):
             self.root.ids.master_password_input.text = ""
             toast("LemusAI активирован!")
         else:
-            toast(f"Ошибка: {err[:60]}")
+            toast(f"Ошибка gist: {err[:60]}")
 
     def reset_all_keys(self):
         self.config = EMPTY_CONFIG.copy()
@@ -1750,17 +1983,17 @@ class LemusStudioApp(MDApp):
         if self.config.get("is_master_activated"):
             label.text = f"LemusAI активен\n({self.config.get('activation_source','?')}, {self.config.get('activated_at','')})"
             label.theme_text_color = "Custom"
-            label.text_color = (0.3, 0.9, 0.4, 1)
+            label.text_color = (0.35, 0.85, 0.45, 1)
         elif self.config.get("gemini_key") or self.config.get("openrouter_key"):
             label.text = "Гостевой режим (свои ключи)"
             label.theme_text_color = "Custom"
             label.text_color = (0.9, 0.75, 0.3, 1)
         else:
             label.text = "Не активировано"
-            label.theme_text_color = "Secondary"
+            label.theme_text_color = "Custom"
+            label.text_color = (0.62, 0.60, 0.70, 1)
 
     def save_user_settings(self):
-        """ВАЖНО: поле Gemini ДОБАВЛЯЕТ ключ к списку, а не стирает список"""
         r = self.root
         uk = r.ids.cfg_gemini.text.strip()
         keys = list(self.config.get("gemini_keys", []))
@@ -1793,57 +2026,74 @@ class LemusStudioApp(MDApp):
 
     def show_vault_status(self):
         if self.config.get("is_master_activated"):
-            toast(f"LemusAI ({len(self.config.get('gemini_keys', []))} Gemini)")
+            toast(f"LemusAI: Gemini {len(self.config.get('gemini_keys', []))}")
         elif self.config.get("gemini_key") or self.config.get("openrouter_key"):
             toast("Гостевой режим")
         else:
             toast("Ключи не настроены")
 
     def run_key_diagnostics(self):
-        toast("Диагностика...")
+        toast("Диагностика... (до 25 сек)")
         threading.Thread(target=self._diag_thread).start()
 
     def _diag_thread(self):
+        from concurrent.futures import ThreadPoolExecutor
         lines = ["Диагностика ключей:"]
+        # проверка SSL/сети
+        try:
+            req = urllib.request.Request("https://generativelanguage.googleapis.com/v1beta/models?key=invalid_test",
+                                         headers={"User-Agent": "LemusStudio/5.4"})
+            try:
+                urllib.request.urlopen(req, timeout=10)
+                lines.append("Сеть и SSL: в порядке")
+            except urllib.error.HTTPError:
+                lines.append("Сеть и SSL: в порядке")
+        except Exception as e:
+            lines.append(f"Сеть/SSL: ОШИБКА {str(e)[:60]}")
         g_keys = self.config.get("gemini_keys", [])
         if not g_keys and self.config.get("gemini_key"):
             g_keys = [self.config.get("gemini_key")]
-        alive = 0
-        for i, k in enumerate(g_keys):
-            ok_model = None
-            for m in GEMINI_MODELS:
+        def ping(k):
+            for m in GEMINI_MODELS[:2]:
                 try:
                     self._call_gemini_native("ping", k, model=m)
-                    ok_model = m
-                    break
+                    return m
                 except Exception:
                     continue
-            if ok_model:
+            return None
+        try:
+            with ThreadPoolExecutor(max_workers=6) as ex:
+                results = list(ex.map(ping, g_keys))
+        except Exception:
+            results = [ping(k) for k in g_keys]
+        alive = 0
+        for i, (k, m) in enumerate(zip(g_keys, results)):
+            if m:
                 alive += 1
-                lines.append(f"Gemini #{i+1} {k[:8]}...: OK ({ok_model})")
+                lines.append(f"Gemini #{i+1} {k[:8]}...: жив ({m})")
             else:
-                lines.append(f"Gemini #{i+1} {k[:8]}...: FAIL")
-        lines.append(f"Живых Gemini: {alive}/{len(g_keys)}")
+                lines.append(f"Gemini #{i+1} {k[:8]}...: не отвечает")
+        lines.append(f"Итого живых Gemini: {alive}/{len(g_keys)}")
         or_key = self.config.get("openrouter_key", "")
         if or_key:
             try:
                 req = urllib.request.Request("https://openrouter.ai/api/v1/models",
                                              headers={"Authorization": f"Bearer {or_key}"})
-                with urllib.request.urlopen(req, timeout=8) as r:
-                    lines.append("OpenRouter: OK" if r.status == 200 else f"OpenRouter: FAIL {r.status}")
-            except Exception:
-                lines.append("OpenRouter: FAIL")
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    lines.append("OpenRouter: жив" if r.status == 200 else f"OpenRouter: код {r.status}")
+            except Exception as e:
+                lines.append(f"OpenRouter: не отвечает ({str(e)[:40]})")
         hf = self.config.get("hf_token", "")
         if hf:
             try:
                 req = urllib.request.Request("https://huggingface.co/api/whoami-v2",
                                              headers={"Authorization": f"Bearer {hf}"})
-                with urllib.request.urlopen(req, timeout=8) as r:
-                    lines.append("HuggingFace: OK" if r.status == 200 else f"HuggingFace: FAIL {r.status}")
-            except Exception:
-                lines.append("HuggingFace: FAIL")
-        lines.append(f"Fish.audio: {'OK' if self.config.get('fish_key') else 'FAIL'}")
-        lines.append(f"Groq: {'OK' if self.config.get('groq_key') else 'FAIL'}")
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    lines.append("HuggingFace: жив" if r.status == 200 else f"HuggingFace: код {r.status}")
+            except Exception as e:
+                lines.append(f"HuggingFace: не отвечает ({str(e)[:40]})")
+        lines.append(f"Fish.audio: ключ {'есть' if self.config.get('fish_key') else 'нет'}")
+        lines.append(f"Groq: ключ {'есть' if self.config.get('groq_key') else 'нет'}")
         try:
             lines.append(f"Хранилище: {get_storage_root()}")
         except Exception:
@@ -1856,13 +2106,22 @@ class LemusStudioApp(MDApp):
                 self.diag_dialog.dismiss()
         except Exception:
             pass
-        self.diag_dialog = MDDialog(title="Результаты", text=text,
-            buttons=[MDRaisedButton(text="OK", on_release=lambda i: self.diag_dialog.dismiss())])
+        self.diag_dialog = MDDialog(title="Результаты диагностики", text=text,
+            buttons=[MDRaisedButton(text="Закрыть", on_release=lambda i: self.diag_dialog.dismiss())])
         self.diag_dialog.open()
 
     # ===== ФАЙЛ-МЕНЕДЖЕР =====
     def open_file_manager(self, purpose="voice"):
         self.file_manager_purpose = purpose
+        if platform == "android":
+            try:
+                from jnius import autoclass
+                Env = autoclass("android.os.Environment")
+                if not Env.isExternalStorageManager():
+                    toast("Нужен доступ ко всем файлам: откроется экран настроек")
+                    self._request_all_files_access()
+            except Exception:
+                pass
         start = "/storage/emulated/0" if platform == "android" else os.path.expanduser("~")
         self.file_manager.show(start)
 
@@ -1894,13 +2153,13 @@ class LemusStudioApp(MDApp):
 
     def _render_onboard_card(self):
         cards = [
-            ("LEMUS AI MUSIC STUDIO", "Автономная продюсерская станция.\n\n• Сингл\n• Промпт\n• Вирусный хит\n• EP + досоздание\n• Доход со стримингов"),
-            ("Встроенный плеер", "Полоса плеера появляется под шапкой при воспроизведении.\nОчередь играет весь список.\nШаринг трека в мессенджеры."),
-            ("Голос и ударения", "• Демоголос 10-30 сек → клон Fish.audio\n• Ударения через + (авто-очистка)\n• Клон копирует интонацию"),
+            ("LEMUS AI MUSIC STUDIO", "Автономная продюсерская станция.\n\n• Сингл\n• Промпт\n• Вирусный хит\n• EP + досоздание треков\n• Доход со стримингов"),
+            ("Встроенный плеер", "Полоса плеера плавно появляется под шапкой.\nОчередь играет весь список.\nШаринг трека в мессенджеры."),
+            ("Голос и ударения", "• Демоголос 10-30 сек → клон Fish.audio\n• Ударения через + (авто-очистка)\n• Клон копирует интонацию образца"),
             ("Форматы экспорта", "• WAV 44.1/16 — мастер\n• MP3 320 всегда\n• FLAC / m4a при ffmpeg\n• ZIP-пакет дистрибьютора"),
-            ("Активация", "1. Сохрани keys.json\n2. Настройки → Загрузить JSON\n3. Или пароль LemusAI\n\nБез активации — гостевой режим."),
-            ("Право и маркировка AI", "AI-треки МОЖНО в Яндекс Музыку.\n\n• Ты правообладатель\n• Менять куски НЕ нужно\n• Маркировка AI — твой выбор"),
-            ("Данные и обновления", "• Проекты переживают переустановку\n• OTA-обновления поверх\n• Удаление с подтверждением\n• Разреши доступ к файлам"),
+            ("Активация", "1. Сохрани keys.json на телефон\n2. Настройки → Загрузить keys.json\n3. Или пароль LemusAI (gist)\n\nБез активации — гостевой режим."),
+            ("Право и маркировка AI", "AI-треки МОЖНО в Яндекс Музыку.\n\n• Ты правообладатель\n• Менять куски руками НЕ нужно\n• Маркировка AI — твой выбор"),
+            ("Данные и обновления", "• Проекты переживают переустановку\n• OTA-обновления поверх\n• Удаление с подтверждением\n• Разреши доступ к файлам при запуске"),
         ]
         card = cards[self.onboard_idx]
         is_last = self.onboard_idx == len(cards) - 1
@@ -1952,9 +2211,9 @@ class LemusStudioApp(MDApp):
             ("Дистрибьюторы", "РФ: ONErpm (15%), Multiza (20%)\nМир: DistroKid, TuneCore, CD Baby"),
             ("Файлы для Яндекса", "• WAV 44.1/16/Stereo (или FLAC)\n• Обложка 3000x3000 sRGB\n• MP3 320 kbps\n• -14 LUFS / TP -1.0"),
             ("AI-статус релиза", "Указывать AI — твой выбор.\nВ РФ обязательной маркировки нет.\nФлаг пишется в паспорт и ZIP."),
-            ("Калькулятор дохода", "Кнопка Доход в медиатеке:\nстримы → деньги по ставкам\nSpotify / Яндекс / Apple."),
+            ("Калькулятор дохода", "Кнопка «Доход» в медиатеке:\nстримы → деньги по ставкам\nSpotify / Яндекс / Apple."),
             ("Загрузка", "one-rpm.com → WAV + обложка → релиз через 2 недели → модерация 1-3 дня"),
-            ("Экономика", "• Spotify 1000 ≈ $3-5\n• Яндекс 1000 ≈ 50-100₽\n• Apple 1000 ≈ $7\n• Фон = часы прослушивания"),
+            ("Экономика", "• Spotify 1000 ≈ $3-5\n• Яндекс 1000 ≈ 50-100 ₽\n• Apple 1000 ≈ $7\n• Фоновые жанры = часы прослушивания"),
         ]
         title, body = cards[self.monetize_idx]
         is_last = self.monetize_idx == len(cards) - 1
@@ -2000,12 +2259,12 @@ class LemusStudioApp(MDApp):
             except Exception: pass
             self._show_info("Прогноз дохода",
                 f"Стримов: {streams}\n\n"
-                f"Spotify: ${spotify:.2f}\n"
-                f"Яндекс Музыка: {yandex:.0f} RUB\n"
-                f"Apple Music: ${apple:.2f}\n\n"
-                f"Фоновые жанры дают x2-3 сессии.")
+                f"Spotify: ≈ ${spotify:.2f}\n"
+                f"Яндекс Музыка: ≈ {yandex:.0f} ₽\n"
+                f"Apple Music: ≈ ${apple:.2f}\n\n"
+                f"Фоновые жанры дают x2-3 сессии — умножь на 2-3.")
         dlg = MDDialog(title="Калькулятор дохода",
-            text="Ставки: Spotify $4/1000, Яндекс 75RUB/1000, Apple $7/1000.",
+            text="Ставки: Spotify $4/1000, Яндекс 75 ₽/1000, Apple $7/1000.",
             content_cls=tf,
             buttons=[MDFlatButton(text="Отмена", on_release=lambda i: dlg.dismiss()),
                      MDRaisedButton(text="Посчитать", on_release=calc)])
@@ -2013,7 +2272,7 @@ class LemusStudioApp(MDApp):
 
     def _show_info(self, title, text):
         d = MDDialog(title=title, text=text,
-            buttons=[MDRaisedButton(text="OK", on_release=lambda i: d.dismiss())])
+            buttons=[MDRaisedButton(text="Закрыть", on_release=lambda i: d.dismiss())])
         d.open()
 
     def add_to_history(self, ptype, text):
@@ -2031,12 +2290,12 @@ class LemusStudioApp(MDApp):
             self.save_history()
             try: dlg.dismiss()
             except Exception: pass
-            toast("Очищено")
+            toast("История очищена")
         def use_last(i):
             self.root.ids.s_title_input.text = self.history[-1]["prompt"]
             try: dlg.dismiss()
             except Exception: pass
-            toast("Подставлено")
+            toast("Подставлено в Сингл")
         dlg = MDDialog(title="История промптов", text=items[:1800],
             buttons=[MDFlatButton(text="Очистить", on_release=clear_h),
                      MDRaisedButton(text="Повторить последний", on_release=use_last)])
@@ -2055,11 +2314,11 @@ class LemusStudioApp(MDApp):
                     except Exception:
                         pass
         if not parts:
-            toast("Логи пусты")
+            toast("Логи пусты — падений не было")
             return
         text = "\n\n".join(parts)[:3000]
-        d = MDDialog(title="Логи", text=text,
-            buttons=[MDRaisedButton(text="OK", on_release=lambda i: d.dismiss())])
+        d = MDDialog(title="Логи запуска", text=text,
+            buttons=[MDRaisedButton(text="Закрыть", on_release=lambda i: d.dismiss())])
         d.open()
 
     def send_logs_to_me(self):
@@ -2085,7 +2344,7 @@ class LemusStudioApp(MDApp):
             with open(tmp, "w", encoding="utf-8") as f:
                 f.write(body)
         except Exception:
-            toast("Ошибка создания файла")
+            toast("Не удалось создать файл логов")
             return
         if platform == "android":
             try:
@@ -2097,11 +2356,11 @@ class LemusStudioApp(MDApp):
                 intent = Intent(Intent.ACTION_SEND)
                 intent.setType("text/plain")
                 intent.putExtra(Intent.EXTRA_STREAM, Uri.fromFile(File(tmp)))
-                intent.putExtra(Intent.EXTRA_SUBJECT, f"Lemus logs v{CURRENT_VERSION}")
-                PythonActivity.mActivity.startActivity(Intent.createChooser(intent, "Отправить"))
+                intent.putExtra(Intent.EXTRA_SUBJECT, f"Lemus логи v{CURRENT_VERSION}")
+                PythonActivity.mActivity.startActivity(Intent.createChooser(intent, "Отправить логи"))
                 return
             except Exception as e:
-                toast(f"Share error: {str(e)[:50]}")
+                toast(f"Ошибка отправки: {str(e)[:50]}")
         self._show_info("Логи", body[:1500])
 
     # ===== YANDEX / УВЕДОМЛЕНИЯ / OTA =====
@@ -2111,9 +2370,9 @@ class LemusStudioApp(MDApp):
             toast("Yandex token не задан")
             return
         if not self.projects:
-            toast("Нет проектов")
+            toast("Нет проектов для резерва")
             return
-        toast("Загрузка...")
+        toast("Резервное копирование...")
         threading.Thread(target=self._yandex_backup_thread, args=(token,)).start()
 
     def _yandex_backup_thread(self, token):
@@ -2140,9 +2399,9 @@ class LemusStudioApp(MDApp):
                             req3 = urllib.request.Request(href, data=data, method="PUT")
                             urllib.request.urlopen(req3, timeout=60)
                             uploaded += 1
-            Clock.schedule_once(lambda dt: toast(f"Загружено {uploaded}"), 0)
+            Clock.schedule_once(lambda dt: toast(f"Загружено треков: {uploaded}"), 0)
         except Exception as e:
-            Clock.schedule_once(lambda dt: toast(f"Yandex: {str(e)[:50]}"), 0)
+            Clock.schedule_once(lambda dt: toast(f"Ошибка Yandex: {str(e)[:50]}"), 0)
 
     def _send_notification(self, title, text):
         if platform != "android":
@@ -2162,7 +2421,7 @@ class LemusStudioApp(MDApp):
                 nm = activity.getSystemService(Context.NOTIFICATION_SERVICE)
                 nm.notify(int(time.time()) % 10000, builder.build())
         except Exception as e:
-            print(f"Notification: {e}")
+            print(f"Уведомление: {e}")
 
     def check_for_updates(self, silent=False):
         threading.Thread(target=self._check_update_thread, args=(silent,)).start()
@@ -2170,7 +2429,7 @@ class LemusStudioApp(MDApp):
     def _check_update_thread(self, silent):
         try:
             req = urllib.request.Request(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
-                headers={"User-Agent": "LemusStudio/5.3", "Accept": "application/vnd.github.v3+json"})
+                headers={"User-Agent": "LemusStudio/5.4", "Accept": "application/vnd.github.v3+json"})
             with urllib.request.urlopen(req, timeout=10) as r:
                 data = json.loads(r.read().decode())
                 remote = data.get("tag_name", "").lstrip("v")
@@ -2182,10 +2441,10 @@ class LemusStudioApp(MDApp):
                 if remote and self._is_newer(remote, CURRENT_VERSION) and apk_url:
                     Clock.schedule_once(lambda dt: self._show_update_dialog(remote, data.get("body", ""), apk_url), 0)
                 elif not silent:
-                    Clock.schedule_once(lambda dt: toast(f"v{CURRENT_VERSION} актуальна"), 0)
+                    Clock.schedule_once(lambda dt: toast(f"Версия {CURRENT_VERSION} актуальна"), 0)
         except Exception:
             if not silent:
-                Clock.schedule_once(lambda dt: toast("Сервер недоступен"), 0)
+                Clock.schedule_once(lambda dt: toast("Сервер обновлений недоступен"), 0)
 
     def _is_newer(self, r, c):
         try:
@@ -2206,7 +2465,7 @@ class LemusStudioApp(MDApp):
         self.update_dialog.open()
 
     def _download_apk(self, url):
-        toast("Загрузка...")
+        toast("Загрузка обновления...")
         threading.Thread(target=self._dl_worker, args=(url,)).start()
 
     def _dl_worker(self, url):
@@ -2217,7 +2476,7 @@ class LemusStudioApp(MDApp):
                 f.write(r.read())
             Clock.schedule_once(lambda dt: self._install_apk(dest), 0)
         except Exception as e:
-            Clock.schedule_once(lambda dt: toast(f"Download: {str(e)[:50]}"), 0)
+            Clock.schedule_once(lambda dt: toast(f"Ошибка загрузки: {str(e)[:50]}"), 0)
 
     def _install_apk(self, apk_path):
         if platform == "android":
@@ -2232,21 +2491,21 @@ class LemusStudioApp(MDApp):
                 intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 PythonActivity.mActivity.startActivity(intent)
             except Exception as e:
-                toast(f"Install: {str(e)[:50]}")
+                toast(f"Ошибка установки: {str(e)[:50]}")
         else:
             toast(f"Файл: {apk_path}")
 
 
 if __name__ == "__main__":
-    _log("=== MAIN ENTRY ===")
+    _log("=== ТОЧКА ВХОДА ===")
     try:
         LemusStudioApp().run()
     except Exception as e:
-        _log(f"FATAL: {e}")
+        _log(f"КРИТИЧЕСКАЯ ОШИБКА: {e}")
         traceback.print_exc()
         try:
             with open("crash_fatal.log", "w", encoding="utf-8") as f:
-                f.write(f"Fatal at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Падение {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write(traceback.format_exc())
         except Exception:
             pass
