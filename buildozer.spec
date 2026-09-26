@@ -4,14 +4,15 @@ package.name = lemusaimusicstudio
 package.domain = org.lemus.music
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json
-version = 4.0.0
+version = 5.4.0
 
-requirements = python3==3.11.9,hostpython3==3.11.9,kivy==2.3.0,kivymd==1.2.0,mutagen,pyjnius
+# certifi КРИТИЧЕН: без него все HTTPS-запросы (Gemini, OpenRouter, звук) падают на Android
+requirements = python3==3.11.9,hostpython3==3.11.9,kivy==2.3.0,kivymd==1.2.0,mutagen,pyjnius,certifi
 
 orientation = portrait
 fullscreen = 0
 
-android.permissions = INTERNET,WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE,RECORD_AUDIO,REQUEST_INSTALL_PACKAGES,POST_NOTIFICATIONS,MANAGE_EXTERNAL_STORAGE
+android.permissions = INTERNET,WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE,READ_MEDIA_AUDIO,RECORD_AUDIO,REQUEST_INSTALL_PACKAGES,POST_NOTIFICATIONS,MANAGE_EXTERNAL_STORAGE
 android.api = 33
 android.minapi = 21
 android.ndk = 25b
