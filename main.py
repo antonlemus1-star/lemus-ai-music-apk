@@ -4,11 +4,9 @@ import io
 import json
 import threading
 import hashlib
-import base64
 import math
 import time
 import struct
-import wave
 import re
 import zipfile
 import shutil
@@ -30,7 +28,7 @@ def _log(msg):
     except Exception:
         pass
 
-_log("=== STARTUP v7.4.0 AUDIO ENGINE V4 INTEGRATED ===")
+_log("=== STARTUP v7.4.0 FINAL CLEAN BUILD ===")
 
 try:
     import certifi
@@ -54,7 +52,7 @@ try:
     from kivy.animation import Animation
     from kivy.uix.widget import Widget
     from kivy.uix.image import Image
-    from kivy.properties import NumericProperty, StringProperty, BooleanProperty, ListProperty, ObjectProperty
+    from kivy.properties import NumericProperty, StringProperty, BooleanProperty
     from kivy.factory import Factory
     from kivy.logger import Logger
     _log("OK kivy")
@@ -79,7 +77,7 @@ try:
                                  IconRightWidget, CheckboxLeftWidget)
     from kivymd.toast import toast
     
-    # Fallbacks for older/newer KivyMD versions
+    # Fallbacks for separators/switches
     try:
         from kivymd.uix.divider import MDSeparator
     except ImportError:
@@ -177,21 +175,21 @@ TYPO_MAP = [
 ]
 
 GENRE_BPM = [
-    (("drum and bass", "dnb"), 174, "melodic drum and bass", "warm pads, rolling bass, breakbeat"),
-    (("phonk",), 132, "drift phonk", "cowbell melody, 808 bass, dark vibe"),
-    (("lo-fi",), 82, "lo-fi chill", "vinyl noise, rhodes piano, soft beat"),
-    (("house",), 124, "deep house", "groove bass, soft keys, four-on-the-floor"),
-    (("trap", "rap", "hip-hop"), 140, "trap rap", "808 bass, hi-hats, dark synths"),
-    (("ballad",), 72, "pop ballad", "piano, strings, live bass"),
-    (("techno",), 128, "techno", "industrial synths, hard beat"),
-    (("pop",), 100, "modern pop", "clean production, synth pads, live bass"),
+    (("drum and bass", "dnb"), 174, "melodic drum and bass", "тёплые пэды, роллинг-бас, брейкбит"),
+    (("phonk",), 132, "drift phonk", "ковбелл-мелодия, 808-бас, тёмный вайб"),
+    (("lo-fi",), 82, "lo-fi chill", "виниловый шум, родес-пиано, мягкий бит"),
+    (("house",), 124, "deep house", "грув-бас, мягкие клавиши, четырёхдольный бит"),
+    (("trap", "rap", "рэп", "hip-hop"), 140, "trap rap", "808-бас, хэты с трещоткой, мрачные синты"),
+    (("ballad", "баллад"), 72, "pop ballad", "фортепиано, струнные, живой бас"),
+    (("techno",), 128, "techno", "индустриальные синты, жёсткий бит"),
+    (("pop", "поп"), 100, "modern pop", "чистый продакшн, синтезаторные пэды, живой бас"),
 ]
 
 ENHANCE_SYSTEM = (
-    "You are a music neural network prompt engineer level Suno/Udio. "
-    "User gives rough idea. You return ONE LINE ready prompt in Russian: "
-    "genre and subgenre, vocals, instruments, tempo in bpm, key, mood, "
-    "structure (intro/verse/chorus/bridge/outro). No JSON, no explanations."
+    "Ты — промпт-инженер музыкальных нейросетей уровня Suno/Udio. "
+    "Пользователь даёт черновую идею. Ты возвращаешь ОДНУ строку готового промпта на русском: "
+    "жанр и поджанр, вокал, инструменты, темп в bpm, тональность, настроение, "
+    "структура (интро/куплет/припев/бридж/аутро). Без JSON, без пояснений."
 )
 
 # ==============================================================================
@@ -239,7 +237,7 @@ def get_storage_root():
     return _STORAGE_ROOT
 
 # ==============================================================================
-# MUSIC THEORY & PROCEDURAL AUDIO ENGINE V4 (THE FIX)
+# MUSIC THEORY & PROCEDURAL AUDIO ENGINE V4
 # ==============================================================================
 NOTE_SEMI = {"C": 0, "C#": 1, "Db": 1, "D": 2, "D#": 3, "Eb": 3, "E": 4, "F": 5,
              "F#": 6, "Gb": 6, "G": 7, "G#": 8, "Ab": 8, "A": 9, "A#": 10, "Bb": 10, "B": 11}
@@ -282,13 +280,6 @@ def _degree_to_freq(root_hz, scale, degree, octave_shift=0):
     return root_hz * (2 ** (semi / 12.0))
 
 class ProceduralAudioEngineV4:
-    """
-    V4 Engine: 
-    - Section-based melody (not looping motif)
-    - Sidechain ducking
-    - Stereo slap delay
-    - Humanized drums
-    """
     def __init__(self, sr=22050):
         self.sr = sr
 
@@ -394,12 +385,10 @@ class ProceduralAudioEngineV4:
                 if b % 2 == 1: chord_i += 1
                 start_s = bar_idx * bar_samples
                 
-                # PAD
                 pad_amp = 0.055 + 0.045 * energy
                 for freq in ch_freqs[1:]:
                     self._add_pad(buf_l, buf_r, start_s, bar_samples, freq, pad_amp, detune=0.0035)
                 
-                # BASS
                 bass_f = ch_freqs[0] / 2.0
                 bass_amp = 0.15 + 0.12 * energy
                 pattern = [0.0, 1.0, 2.0, 3.0] if energy > 0.8 else [0.0, 2.0]
@@ -410,7 +399,6 @@ class ProceduralAudioEngineV4:
                         f = bass_f * (1.5 if (energy > 0.85 and rnd.random() < 0.18) else 1.0)
                         self._add_bass(buf_l, buf_r, bs, bl, f, bass_amp)
                 
-                # DRUMS
                 if energy > 0.35:
                     kick_steps = [0.0, 2.0] if energy <= 0.8 else [0.0, 0.75, 2.0, 2.75]
                     for beat_off in kick_steps:
@@ -441,7 +429,6 @@ class ProceduralAudioEngineV4:
                             else:
                                 self._add_hat(buf_l, buf_r, hs, hl, amp * 1.2, amp * 0.8)
                 
-                # MELODY
                 bar_start_beat = b * 4.0
                 bar_end_beat = bar_start_beat + 4.0
                 for off, ndur, degree in phrase:
@@ -507,7 +494,7 @@ class ProceduralAudioEngineV4:
         for i in range(ln):
             env = self._adsr(i, ln, att, dec, sus, rel)
             v = math.sin(w1 * i) + math.sin(w2 * i)
-            prev = prev + 0.5 * (v - prev) # LPF
+            prev = prev + 0.5 * (v - prev)
             val = amp * env * prev * 0.5
             L[start + i] += val
             R[start + i] += val
@@ -2693,10 +2680,16 @@ class LemusStudioApp(MDApp):
     def show_prompt_history(self):
         if not self.history: toast("History empty"); return
         items = "\n\n".join([f"[{h['type']}] {h['date']}\n{h['prompt']}" for h in reversed(self.history[-8:])]); dlg = None
-        def clear_h(i): self.history = []; self.save_history(); try: dlg.dismiss()
-        except Exception: pass; toast("Cleared")
-        def use_last(i): self.modes["single"].ids.s_title_input.text = self.history[-1]["prompt"]; try: dlg.dismiss()
-        except Exception: pass; toast("Inserted")
+        def clear_h(i):
+            self.history = []; self.save_history()
+            try: dlg.dismiss()
+            except Exception: pass
+            toast("Cleared")
+        def use_last(i):
+            self.modes["single"].ids.s_title_input.text = self.history[-1]["prompt"]
+            try: dlg.dismiss()
+            except Exception: pass
+            toast("Inserted")
         dlg = MDDialog(title="Prompt History", text=items[:1800], buttons=[MDFlatButton(text="Clear", on_release=clear_h), MDRaisedButton(text="Repeat Last", on_release=use_last)]); dlg.open()
 
     def show_crash_log(self):
@@ -2820,10 +2813,14 @@ class LemusStudioApp(MDApp):
 
 if __name__ == "__main__":
     _log("=== ENTRY POINT ===")
-    try: LemusStudioApp().run()
+    try:
+        LemusStudioApp().run()
     except Exception as e:
-        _log(f"FATAL: {e}"); traceback.print_exc()
+        _log(f"FATAL: {e}")
+        traceback.print_exc()
         try:
             with open("crash_fatal.log", "w", encoding="utf-8") as f:
-                f.write(f"Crash {time.strftime('%Y-%m-%d %H:%M:%S')}\n"); f.write(traceback.format_exc())
-        except Exception: pass
+                f.write(f"Crash {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(traceback.format_exc())
+        except Exception:
+            pass
